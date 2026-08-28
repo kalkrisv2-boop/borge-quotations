@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0.0",
+  "productName": "QuotationSystem",
+  "version": "0.1.0",
+  "identifier": "com.quotation.app",
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devUrl": null,
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Modular Quotation & Equipment Hire System",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all"
+  }
+}

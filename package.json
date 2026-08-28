@@ -1,0 +1,14 @@
+{
+  "name": "quotation-equipment-hire-system",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "web:dev": "vite src",
+    "web:build": "vite build src --outDir ../dist",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
