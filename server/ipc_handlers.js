@@ -1,3 +1,4 @@
+import { verifySessionToken } from './auth.js';
 import { guardApiRoute, seedTenantEntitlements } from './entitlements.js';
 
 const quotesDb = new Map();
@@ -5,6 +6,19 @@ const quotesDb = new Map();
 export function handleIpcCommand(commandName, payload, sessionToken, secretKey) {
   switch (commandName) {
     case 'admin_seed_entitlements': {
+      // SECURITY FIX (Architect audit, Phase 1.2): this command previously had
+      // NO auth check at all — any caller, authenticated or not, could grant
+      // itself (or any arbitrary tenant_id) any entitlement. Confirmed
+      // exploitable by direct test (see audit notes), not just read by eye.
+      // Now requires a valid, verified session token belonging to an
+      // 'admin'-role user before any entitlement write is accepted.
+      const decodedSession = verifySessionToken(sessionToken, secretKey);
+      if (!decodedSession) {
+        return { status: 401, error: 'Unauthorized: Invalid or expired session token' };
+      }
+      if (decodedSession.role !== 'admin') {
+        return { status: 403, error: 'Forbidden: Only admin-role sessions may seed entitlements' };
+      }
       if (!payload || !payload.tenant_id || !Array.isArray(payload.entitlements)) {
         return { status: 400, error: 'Invalid payload for entitlement seed' };
       }
@@ -16,7 +30,7 @@ export function handleIpcCommand(commandName, payload, sessionToken, secretKey) 
       return guardApiRoute(sessionToken, secretKey, 'quotes_core', (contextPayload) => {
         const tenantId = contextPayload.tenant_id;
         const tenantQuotes = quotesDb.get(tenantId) || [];
-        
+
         const quoteData = contextPayload.quote;
         if (!quoteData || !quoteData.offer_ref) {
           throw new Error('Invalid quote payload');
@@ -39,7 +53,7 @@ export function handleIpcCommand(commandName, payload, sessionToken, secretKey) 
         const tenantId = contextPayload.tenant_id;
         const tenantQuotes = quotesDb.get(tenantId) || [];
         const found = tenantQuotes.find(q => q.offer_ref === contextPayload.offer_ref);
-        
+
         if (!found) {
           return { error: 'Quote not found' };
         }
