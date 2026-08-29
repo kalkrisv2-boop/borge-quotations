@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    quotation_system_lib::run();
+    borge_equipment_rental_lib::run();
 }

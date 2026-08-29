@@ -1,50 +1,38 @@
-/**
- * Defensive Bridge Helper for Tauri v2 / Web Target Dual Compatibility
- * Canonical accessor — all future IPC/dialog/fs calls should import from here
- * per PROJECT_BASELINE.md Section 1.2a. Do not touch window.__TAURI__ directly
- * in feature code.
- */
-const getNested = (obj, path) => path.split('.').reduce((acc, part) => acc && acc[part], obj);
-
-export const isTauri = () => {
-  return typeof window !== 'undefined' && Boolean(window.__TAURI__);
-};
-
-export const invoke = async (cmd, args = {}) => {
-  if (isTauri()) {
-    const tauriInvoke =
-      getNested(window, '__TAURI__.core.invoke') ||
-      getNested(window, '__TAURI__.invoke');
-    if (typeof tauriInvoke === 'function') {
-      return tauriInvoke(cmd, args);
+function getTauriInvoke() {
+  if (typeof window !== 'undefined' && window.__TAURI__) {
+    if (window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
+      return window.__TAURI__.core.invoke;
+    }
+    if (typeof window.__TAURI__.invoke === 'function') {
+      return window.__TAURI__.invoke;
     }
   }
-  console.warn(`[Tauri Bridge] Web fallback triggered for IPC command: "${cmd}"`, args);
   return null;
-};
+}
 
-export const openDialog = async (options = {}) => {
-  if (isTauri()) {
-    const dialogOpen =
-      getNested(window, '__TAURI__.plugin.dialog.open') ||
-      getNested(window, '__TAURI__.dialog.open');
-    if (typeof dialogOpen === 'function') {
-      return dialogOpen(options);
+export async function invokeCommand(cmd, args = {}) {
+  const tauriInvoke = getTauriInvoke();
+  if (tauriInvoke) {
+    try {
+      return await tauriInvoke(cmd, args);
+    } catch (err) {
+      console.error(`Tauri IPC error executing command ${cmd}:`, err);
+      throw err;
     }
   }
-  console.warn('[Tauri Bridge] Dialog API unavailable in web mode or bridge not initialized.');
-  return null;
-};
 
-export const readFile = async (filePath, options = {}) => {
-  if (isTauri()) {
-    const fsReadFile =
-      getNested(window, '__TAURI__.plugin.fs.readFile') ||
-      getNested(window, '__TAURI__.fs.readFile');
-    if (typeof fsReadFile === 'function') {
-      return fsReadFile(filePath, options);
-    }
+  console.warn(`[Tauri Bridge] Running in non-desktop mode. Mocking or routing command: ${cmd}`);
+  if (typeof window !== 'undefined' && window.__MOCK_BACKEND_IPC__) {
+    return window.__MOCK_BACKEND_IPC__(cmd, args);
   }
-  console.warn('[Tauri Bridge] FS Read File API unavailable in web target.');
-  return null;
-};
+  
+  throw new Error(`Desktop IPC unavailable for command '${cmd}' and no browser mock active.`);
+}
+
+export async function executeGuardedCommand(commandName, payload = null, sessionToken = "") {
+  return await invokeCommand('handle_guarded_ipc', {
+    commandName: commandName || null,
+    payload: payload !== undefined ? payload : null,
+    sessionToken: sessionToken || null
+  });
+}
