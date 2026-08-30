@@ -10,6 +10,18 @@
     <h1>Modular Quotation System Scaffold</h1>
     <p id="status">Checking runtime environment...</p>
   </div>
-  <script type="module" src="./main.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const statusEl = document.getElementById('status');
+      if (statusEl) {
+        const isTauri = !!(window.__TAURI_INTERNALS__ || window.__TAURI_IPC__ || window.__TAURI__);
+        if (isTauri) {
+          statusEl.textContent = 'Runtime detected: Desktop Shell (Tauri v2 native bridge active)';
+        } else {
+          statusEl.textContent = 'Runtime detected: Web Application target (browser fallback active)';
+        }
+      }
+    });
+  </script>
 </body>
 </html>
