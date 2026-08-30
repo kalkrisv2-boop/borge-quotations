@@ -1,9 +1,9 @@
+<!-- templates/quote_pdf_template.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Equipment Quotation - Borge</title>
-  <!-- Google Fonts for crisp English rendering and correct Arabic font shaping -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Cairo:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -11,7 +11,6 @@
 </head>
 <body>
 
-  <!-- HEADER / LETTERHEAD -->
   <div class="header-container">
     <div class="header-row">
       <div class="header-col-left">
@@ -22,14 +21,12 @@
         <div class="doc-title">QUOTATION</div>
       </div>
       <div class="header-col-right">
-        <!-- Arabic Company Name Line (Correct font shaping & isolated direction) -->
         <div class="company-title-ar" dir="rtl" lang="ar">بورج لتأجير المعدات والخدمات اللوجستية</div>
         <div class="company-sub-ar" dir="rtl" lang="ar">أبو ظبي ، الإمارات العربية المتحدة</div>
       </div>
     </div>
   </div>
 
-  <!-- METADATA TABLE -->
   <table class="meta-table">
     <tr>
       <td class="meta-label">Customer:</td>
@@ -53,7 +50,7 @@
       <td class="meta-label">Your Ref / Email:</td>
       <td class="meta-value">—</td>
       <td class="meta-label">Pages:</td>
-      <td class="meta-value">1 of 2</td>
+      <td class="meta-value">1 of 1</td>
     </tr>
   </table>
 
@@ -61,7 +58,6 @@
     <strong>Further to your subject request please see below our offer for the SF6 Gas Test Equipment hiring charges:</strong>
   </div>
 
-  <!-- DYNAMIC MULTI-PAGE LINE ITEMS TABLE -->
   <table class="items-table">
     <thead>
       <tr>
@@ -77,6 +73,10 @@
         <td class="col-no">1</td>
         <td class="col-desc">
           SF6 Economic Gas Service Cart with Storage Tank (600Ltr)
+          <div class="spec-grid">
+            <span class="spec-badge"><span class="spec-key">Tank Cap:</span> <span class="spec-val">600 Ltr</span></span>
+            <span class="spec-badge"><span class="spec-key">Gas Type:</span> <span class="spec-val">SF6</span></span>
+          </div>
           <ul class="item-sub-list">
             <li>Connecting Hose 10mtr</li>
             <li>Connecting Hose 5 mtr</li>
@@ -110,7 +110,7 @@
       </tr>
       <tr>
         <td class="col-no">5</td>
-        <td class="col-desc">Cable Test Plug Size-3</td>
+        <td class="col-desc">Cable Test Plug Size-2</td>
         <td class="col-make">Pfisterer / Size III</td>
         <td class="col-qty">1</td>
         <td class="col-rate">3,250.00</td>
@@ -132,13 +132,28 @@
     </tbody>
   </table>
 
-  <!-- OPERATIONAL NOTE BLOCK -->
+  <table class="totals-table">
+    <tbody>
+      <tr class="subtotal-row">
+        <td class="totals-label">Subtotal</td>
+        <td class="totals-value">67,000.00 AED</td>
+      </tr>
+      <tr class="vat-row">
+        <td class="totals-label">VAT (5%)</td>
+        <td class="totals-value">3,350.00 AED</td>
+      </tr>
+      <tr class="grand-total-row">
+        <td class="totals-label">Grand Total</td>
+        <td class="totals-value">70,350.00 AED</td>
+      </tr>
+    </tbody>
+  </table>
+
   <div class="note-box">
     <strong>Note:</strong> We don't have any technical person for SF6 gas equipment operation. So SF6 gas equipment operation will be your responsibility. Because SF6 gas equipment operation is difficult for even a trained person, all responsibility for SF6 gas equipment operation will be yours only. As per our company policy once you take the equipment you have to pay equipment hiring charges on daily basis on rental period.<br><br>
     <strong>Limitation of Usage - Damages:</strong> Total or partial losses of any components of plant equipment machinery whatsoever caused is totally hirer's liability. The equipment can only be used by skilled personnel. If the equipment is damaged due to misuse, repair will be charged on actuals. It is forbidden to open the unit.
   </div>
 
-  <!-- TERMS & CONDITIONS SECTION -->
   <div class="terms-section">
     <div class="terms-title">Terms &amp; Conditions</div>
     <ol class="terms-list">
@@ -153,10 +168,9 @@
     </ol>
   </div>
 
-  <!-- SIGN-OFF BLOCK -->
   <div class="signature-block">
     <div class="signature-line">For and on behalf of Borge Equipment Rental</div>
-    <div class="system-generated-note">This is a system generated document and needs no signature.</div>
+    <div class="system-generated-note">System generated — valid without signature.</div>
   </div>
 
 </body>
