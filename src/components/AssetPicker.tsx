@@ -3,13 +3,27 @@
 // Dual-target: web (API) + desktop (Tauri IPC)
 // Integrates with quote_items form to populate description, specs, and default pricing
 //
-// AUDIT FIXES (Session 9, Architect):
-// 1. Fixed import path: canonical bridge is at ../../src-shared/tauri-bridge.js
-// 2. Fixed IPC command: use 'asset_lookup_sqlite' (not bare 'asset_lookup')
-// 3. Added mock data for development mode (Vite doesn't serve /api/* by default)
+// AUDIT FIXES (Session 10, Architect):
+// The mock-data fallback added since Session 9 had three real bugs, found by
+// reading this file directly rather than trusting a change-summary report:
+//   1. The web-mode branch short-circuited into mock data unconditionally
+//      (useMockData started true and nothing outside the dead code below it
+//      ever cleared it), so the real /api/v1/assets/search endpoint was
+//      NEVER attempted, contradicting this file's own comment.
+//   2. No distinction between "no dev backend available" and "the backend
+//      correctly rejected this" — a real 401/403 entitlement denial (the
+//      exact case Session 9 fixed the Rust side to enforce) was silently
+//      replaced with fake data instead of shown to the user.
+//   3. Nothing gated this to development — no import.meta.env.DEV check
+//      anywhere, so this could reach a production build and mask a real
+//      failure (expired session, revoked entitlement, network drop) behind
+//      fabricated equipment records in a tool that produces real quotations.
+// Fixed below: mock data is DEV-only, real endpoints are always tried
+// first, and 401/403 responses are surfaced as real errors, never masked.
+
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { tauriIpcCall } from '../../src-shared/tauri-bridge';
+import { tauriIpcCall, type AssetSearchRequest, type AssetSearchType } from '../../src-shared/tauri-bridge';
 import styles from './AssetPicker.module.css';
 
 export interface Asset {
@@ -198,7 +212,7 @@ export const AssetPicker: React.FC<AssetPickerProps> = ({
     const [error, setError] = useState<string | null>(null);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [isDesktopMode, setIsDesktopMode] = useState(isDesktop ?? false);
-    const [useMockData, setUseMockData] = useState(true); // Start with mock data for dev
+    const [useMockData, setUseMockData] = useState(false); // set true only on an actual DEV-mode fallback
 
     // Detect desktop mode on mount
     useEffect(() => {
@@ -224,40 +238,53 @@ export const AssetPicker: React.FC<AssetPickerProps> = ({
             try {
                 let result: Asset[];
 
-                // Try real backend first; fall back to mock data if it fails
-                if (useMockData && !isDesktopMode) {
-                    // Development mode: use mock data
-                    result = filterMockAssets(query, searchType, tenantId);
-                    setAssets(result);
-                    setFilteredAssets(result);
-                    setLoading(false);
-                    return;
-                }
-
                 if (isDesktopMode) {
-                    // Desktop mode: use Tauri IPC
-                    // AUDIT FIX: use 'asset_lookup_sqlite' (the actual registered command)
-                    const searchRequest = {
+                    // Desktop mode: use Tauri IPC — always attempted first,
+                    // regardless of prior mock-data state.
+                    let searchTypeValue: AssetSearchType;
+                    if (searchType === 'name') {
+                        searchTypeValue = { type: 'ByName', value: query || '' };
+                    } else if (searchType === 'code') {
+                        searchTypeValue = { type: 'ByCode', value: query };
+                    } else {
+                        // category
+                        searchTypeValue = { type: 'ByStatus', value: 'Available' };
+                    }
+
+                    const searchRequest: AssetSearchRequest = {
                         tenant_id: tenantId,
-                        search_type:
-                            searchType === 'name'
-                                ? { type: 'ByName', value: query || '' }
-                                : searchType === 'code'
-                                  ? { type: 'ByCode', value: query }
-                                  : { type: 'ByStatus', value: 'Available' },
+                        search_type: searchTypeValue,
                     };
 
                     try {
                         result = await tauriIpcCall('asset_lookup_sqlite', searchRequest);
+                        // Real IPC call succeeded — this file's own indicator
+                        // should reflect that, not keep claiming mock data.
+                        setUseMockData(false);
                     } catch (ipcErr) {
-                        // If IPC fails, fall back to mock data
-                        console.warn('IPC call failed, using mock data:', ipcErr);
+                        const message = ipcErr instanceof Error ? ipcErr.message : String(ipcErr);
+                        // IMPERFECT HEURISTIC, documented as such: tauriInvoke
+                        // wraps all IPC failures into a plain Error with the
+                        // Rust error text embedded in the message — there is
+                        // no structured error code crossing the IPC boundary
+                        // today. Pattern-matching on "Entitlement" is the best
+                        // available signal without changing the Rust command's
+                        // error shape (out of scope for this fix). A real
+                        // entitlement denial is NEVER masked with mock data,
+                        // even in DEV — only genuinely-unreachable commands are.
+                        const looksLikeEntitlementDenial = /entitlement/i.test(message);
+
+                        if (looksLikeEntitlementDenial || !import.meta.env.DEV) {
+                            throw ipcErr;
+                        }
+
+                        console.warn('IPC call failed (DEV fallback to mock data):', ipcErr);
                         result = filterMockAssets(query, searchType, tenantId);
                         setUseMockData(true);
                     }
                 } else {
-                    // Web mode: use HTTP API
-                    // AUDIT FIX: corrected endpoint path
+                    // Web mode: use HTTP API — always attempted first,
+                    // regardless of prior mock-data state.
                     const params = new URLSearchParams();
                     params.append('search_type', searchType);
 
@@ -269,25 +296,28 @@ export const AssetPicker: React.FC<AssetPickerProps> = ({
                         params.append('value', 'Available');
                     }
 
-                    try {
-                        const response = await fetch(`/api/v1/assets/search?${params}`, {
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                        });
+                    const response = await fetch(`/api/v1/assets/search?${params}`, {
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    });
 
-                        if (!response.ok) {
+                    if (response.status === 401 || response.status === 403) {
+                        // A real auth/entitlement rejection — never mask this
+                        // with mock data, in DEV or production.
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+
+                    if (!response.ok) {
+                        if (!import.meta.env.DEV) {
                             throw new Error(`HTTP ${response.status}`);
                         }
-
-                        result = await response.json();
-                        // If real API succeeded, stop using mock data
-                        setUseMockData(false);
-                    } catch (fetchErr) {
-                        // If fetch fails, fall back to mock data
-                        console.warn('API call failed, using mock data:', fetchErr);
+                        console.warn(`API call failed (HTTP ${response.status}), DEV fallback to mock data`);
                         result = filterMockAssets(query, searchType, tenantId);
                         setUseMockData(true);
+                    } else {
+                        result = await response.json();
+                        setUseMockData(false);
                     }
                 }
 
@@ -303,7 +333,7 @@ export const AssetPicker: React.FC<AssetPickerProps> = ({
                 setLoading(false);
             }
         },
-        [tenantId, searchType, isDesktopMode, useMockData]
+        [tenantId, searchType, isDesktopMode]
     );
 
     // Initial load: fetch all available assets

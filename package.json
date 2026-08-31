@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build",
     "dev:vite": "vite --port 1420",
     "build:vite": "tsc && vite build",
+    "build": "tauri build",
     "preview": "vite preview"
   },
   "dependencies": {
