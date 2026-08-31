@@ -1,177 +1,220 @@
-<!-- templates/quote_pdf_template.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Equipment Quotation - Borge</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Cairo:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="pdf_styles.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equipment Rental Quotation</title>
+    <link rel="stylesheet" href="pdf_styles.css">
 </head>
 <body>
+    <div class="quote-document">
+        <!-- ============================================================
+             LETTERHEAD & HEADER
+             ============================================================ -->
+        <header class="letterhead">
+            <div class="letterhead-content">
+                <div class="logo-section">
+                    <img src="./borge-logo.jpg" alt="Borge Logo" class="company-logo">
+                </div>
+                <div class="company-info">
+                    <h1 class="company-name-en">Borge Equipment Rental</h1>
+                    <p class="company-name-ar">استئجار معدات بورج</p>
+                    <div class="contact-grid">
+                        <div class="contact-item">
+                            <span class="label">TRN/VAT:</span>
+                            <span class="value">{{tenant.vat_trn}}</span>
+                        </div>
+                        <div class="contact-item">
+                            <span class="label">P.O. Box:</span>
+                            <span class="value">{{tenant.po_box}}</span>
+                        </div>
+                        <div class="contact-item">
+                            <span class="label">Phone:</span>
+                            <span class="value">{{tenant.phone_1}}</span>
+                        </div>
+                        <div class="contact-item">
+                            <span class="label">Email:</span>
+                            <span class="value">{{tenant.email}}</span>
+                        </div>
+                        <div class="contact-item contact-full">
+                            <span class="label">Address:</span>
+                            <span class="value">
+                                {{tenant.address_line1}}<br>
+                                {{tenant.city}}, {{tenant.country}}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
 
-  <div class="header-container">
-    <div class="header-row">
-      <div class="header-col-left">
-        <div class="company-title-en">BORGE</div>
-        <div class="company-sub-en">Equipment Hire & Logistics — Abu Dhabi, UAE</div>
-      </div>
-      <div class="header-col-center">
-        <div class="doc-title">QUOTATION</div>
-      </div>
-      <div class="header-col-right">
-        <div class="company-title-ar" dir="rtl" lang="ar">بورج لتأجير المعدات والخدمات اللوجستية</div>
-        <div class="company-sub-ar" dir="rtl" lang="ar">أبو ظبي ، الإمارات العربية المتحدة</div>
-      </div>
+        <!-- ============================================================
+             QUOTATION HEADER SECTION
+             ============================================================ -->
+        <section class="quote-header">
+            <div class="quote-title">
+                <h2>EQUIPMENT RENTAL QUOTATION</h2>
+            </div>
+
+            <div class="quote-ref-section">
+                <div class="ref-item">
+                    <span class="ref-label">Quotation Number:</span>
+                    <span class="ref-value">{{quote.offer_ref}}</span>
+                </div>
+                <div class="ref-item">
+                    <span class="ref-label">Revision:</span>
+                    <span class="ref-value">{{quote.rev_suffix}}</span>
+                </div>
+                <div class="ref-item">
+                    <span class="ref-label">Date:</span>
+                    <span class="ref-value">{{quote.quote_date}}</span>
+                </div>
+                <div class="ref-item">
+                    <span class="ref-label">Valid Until:</span>
+                    <span class="ref-value">{{quote.validity_days}} days from issue</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             CLIENT INFORMATION
+             ============================================================ -->
+        <section class="client-info">
+            <div class="info-block">
+                <h3>BILL TO / CLIENT DETAILS</h3>
+                <p class="client-name"><strong>{{quote.customer_name}}</strong></p>
+                <p>{{quote.customer_po_box}}</p>
+                <p>{{quote.customer_city}}, United Arab Emirates</p>
+                {{#if quote.contact_person}}
+                <p><strong>Contact:</strong> {{quote.contact_person}}</p>
+                {{/if}}
+                {{#if quote.customer_email}}
+                <p><strong>Email:</strong> {{quote.customer_email}}</p>
+                {{/if}}
+                {{#if quote.customer_ref}}
+                <p><strong>Your Reference:</strong> {{quote.customer_ref}}</p>
+                {{/if}}
+            </div>
+
+            <div class="info-block">
+                <h3>QUOTE DETAILS</h3>
+                {{#if quote.subject_text}}
+                <p><strong>Subject:</strong> {{quote.subject_text}}</p>
+                {{/if}}
+                {{#if quote.salesperson_name}}
+                <p><strong>Prepared By:</strong> {{quote.salesperson_name}}</p>
+                {{/if}}
+                {{#if quote.salesperson_phone}}
+                <p><strong>Contact:</strong> {{quote.salesperson_phone}}</p>
+                {{/if}}
+            </div>
+        </section>
+
+        <!-- ============================================================
+             LINE ITEMS TABLE
+             ============================================================ -->
+        <section class="line-items-section">
+            <table class="line-items-table">
+                <thead>
+                    <tr>
+                        <th class="col-item">Description</th>
+                        <th class="col-make">Make/Model</th>
+                        <th class="col-specs">Specifications</th>
+                        <th class="col-qty">Qty</th>
+                        <th class="col-rate">Rate</th>
+                        <th class="col-basis">Basis</th>
+                        <th class="col-total">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{#each quote.items}}
+                    <tr class="line-item {{#ifEven @index}}zebra{{/ifEven}}">
+                        <td class="col-item">{{this.item_description}}</td>
+                        <td class="col-make">{{this.make_model}}</td>
+                        <td class="col-specs">{{this.equipment_spec}}</td>
+                        <td class="col-qty">{{this.quantity}}</td>
+                        <td class="col-rate">AED {{formatCurrency this.unit_rate}}</td>
+                        <td class="col-basis">{{this.rate_basis}}</td>
+                        <td class="col-total">AED {{formatCurrency this.line_total}}</td>
+                    </tr>
+                    {{/each}}
+                </tbody>
+            </table>
+        </section>
+
+        <!-- ============================================================
+             TOTALS SECTION
+             ============================================================ -->
+        <section class="totals-section">
+            <div class="totals-container">
+                <div class="totals-row">
+                    <span class="label">Subtotal:</span>
+                    <span class="value">AED {{formatCurrency quote.total_amount}}</span>
+                </div>
+                <div class="totals-row">
+                    <span class="label">VAT ({{quote.vat_rate}}%):</span>
+                    <span class="value">AED {{formatCurrency quote.vat_amount}}</span>
+                </div>
+                <div class="totals-row totals-grand">
+                    <span class="label">GRAND TOTAL:</span>
+                    <span class="value">AED {{formatCurrency quote.grand_total}}</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             RENTAL RATE BASIS LEGEND (if applicable)
+             ============================================================ -->
+        {{#if quote.rate_basis_text}}
+        <section class="rate-basis-section">
+            <h3>RENTAL RATE BASIS</h3>
+            <div class="rate-basis-content">
+                {{quote.rate_basis_text}}
+            </div>
+        </section>
+        {{/if}}
+
+        <!-- ============================================================
+             NOTES & TERMS
+             ============================================================ -->
+        {{#if quote.notes}}
+        <section class="notes-section">
+            <h3>NOTES</h3>
+            <p>{{quote.notes}}</p>
+        </section>
+        {{/if}}
+
+        {{#if quote.terms_conditions}}
+        <section class="terms-section">
+            <h3>TERMS & CONDITIONS</h3>
+            <div class="terms-content">
+                {{quote.terms_conditions}}
+            </div>
+        </section>
+        {{/if}}
+
+        <!-- ============================================================
+             FOOTER & SIGNATURE BLOCK
+             ============================================================ -->
+        <footer class="quote-footer">
+            <div class="footer-content">
+                <div class="signature-block">
+                    <div class="sig-line">
+                        <span class="label">Authorized Signatory</span>
+                    </div>
+                    <div class="sig-space"></div>
+                    <div class="sig-date">Date: ___________________</div>
+                </div>
+
+                <div class="stamp-block">
+                    <div class="stamp-placeholder">[Company Stamp]</div>
+                </div>
+
+                <div class="disclaimer">
+                    <strong>For and on behalf of Borge Equipment Rental — System generated valid without signature.</strong>
+                </div>
+            </div>
+        </footer>
     </div>
-  </div>
-
-  <table class="meta-table">
-    <tr>
-      <td class="meta-label">Customer:</td>
-      <td class="meta-value">Borge</td>
-      <td class="meta-label">Offer Ref:</td>
-      <td class="meta-value">QN-EH/211/2026-Rev.01</td>
-    </tr>
-    <tr>
-      <td class="meta-label">PO Box:</td>
-      <td class="meta-value">Abu Dhabi, UAE</td>
-      <td class="meta-label">Date:</td>
-      <td class="meta-value">20-08-2026</td>
-    </tr>
-    <tr>
-      <td class="meta-label">Contact Person:</td>
-      <td class="meta-value">Rajesh</td>
-      <td class="meta-label">Sales Person:</td>
-      <td class="meta-value">Sreejith-0565465803</td>
-    </tr>
-    <tr>
-      <td class="meta-label">Your Ref / Email:</td>
-      <td class="meta-value">—</td>
-      <td class="meta-label">Pages:</td>
-      <td class="meta-value">1 of 1</td>
-    </tr>
-  </table>
-
-  <div class="intro-text">
-    <strong>Further to your subject request please see below our offer for the SF6 Gas Test Equipment hiring charges:</strong>
-  </div>
-
-  <table class="items-table">
-    <thead>
-      <tr>
-        <th class="col-no">No.</th>
-        <th class="col-desc">Item Description</th>
-        <th class="col-make">Make / Model</th>
-        <th class="col-qty">Qty</th>
-        <th class="col-rate">Monthly Rate (AED)</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td class="col-no">1</td>
-        <td class="col-desc">
-          SF6 Economic Gas Service Cart with Storage Tank (600Ltr)
-          <div class="spec-grid">
-            <span class="spec-badge"><span class="spec-key">Tank Cap:</span> <span class="spec-val">600 Ltr</span></span>
-            <span class="spec-badge"><span class="spec-key">Gas Type:</span> <span class="spec-val">SF6</span></span>
-          </div>
-          <ul class="item-sub-list">
-            <li>Connecting Hose 10mtr</li>
-            <li>Connecting Hose 5 mtr</li>
-            <li>Connecting Hose Filling Connecting Adaptor Box</li>
-          </ul>
-        </td>
-        <td class="col-make">DILO / L057R2BEA0B0</td>
-        <td class="col-qty">1</td>
-        <td class="col-rate">35,000.00</td>
-      </tr>
-      <tr>
-        <td class="col-no">2</td>
-        <td class="col-desc">SF6 Gas Leak detector</td>
-        <td class="col-make">Dilo / 3-033-R002</td>
-        <td class="col-qty">1</td>
-        <td class="col-rate">2,000.00</td>
-      </tr>
-      <tr>
-        <td class="col-no">3</td>
-        <td class="col-desc">SF6 Gas Multi Analyzer</td>
-        <td class="col-make">Dilo / 3-038R-R303</td>
-        <td class="col-qty">1</td>
-        <td class="col-rate">14,000.00</td>
-      </tr>
-      <tr>
-        <td class="col-no">4</td>
-        <td class="col-desc">Cable Test Plug Size-2</td>
-        <td class="col-make">Pfisterer / Size II</td>
-        <td class="col-qty">1</td>
-        <td class="col-rate">3,250.00</td>
-      </tr>
-      <tr>
-        <td class="col-no">5</td>
-        <td class="col-desc">Cable Test Plug Size-2</td>
-        <td class="col-make">Pfisterer / Size III</td>
-        <td class="col-qty">1</td>
-        <td class="col-rate">3,250.00</td>
-      </tr>
-      <tr>
-        <td class="col-no">6</td>
-        <td class="col-desc">Voltage Test Plug Size-2</td>
-        <td class="col-make">Pfisterer</td>
-        <td class="col-qty">1</td>
-        <td class="col-rate">4,750.00</td>
-      </tr>
-      <tr>
-        <td class="col-no">7</td>
-        <td class="col-desc">Voltage Test Plug Size-3</td>
-        <td class="col-make">Pfisterer</td>
-        <td class="col-qty">1</td>
-        <td class="col-rate">4,750.00</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <table class="totals-table">
-    <tbody>
-      <tr class="subtotal-row">
-        <td class="totals-label">Subtotal</td>
-        <td class="totals-value">67,000.00 AED</td>
-      </tr>
-      <tr class="vat-row">
-        <td class="totals-label">VAT (5%)</td>
-        <td class="totals-value">3,350.00 AED</td>
-      </tr>
-      <tr class="grand-total-row">
-        <td class="totals-label">Grand Total</td>
-        <td class="totals-value">70,350.00 AED</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <div class="note-box">
-    <strong>Note:</strong> We don't have any technical person for SF6 gas equipment operation. So SF6 gas equipment operation will be your responsibility. Because SF6 gas equipment operation is difficult for even a trained person, all responsibility for SF6 gas equipment operation will be yours only. As per our company policy once you take the equipment you have to pay equipment hiring charges on daily basis on rental period.<br><br>
-    <strong>Limitation of Usage - Damages:</strong> Total or partial losses of any components of plant equipment machinery whatsoever caused is totally hirer's liability. The equipment can only be used by skilled personnel. If the equipment is damaged due to misuse, repair will be charged on actuals. It is forbidden to open the unit.
-  </div>
-
-  <div class="terms-section">
-    <div class="terms-title">Terms &amp; Conditions</div>
-    <ol class="terms-list">
-      <li>Valid calibration certificate shall be provided by Borge.</li>
-      <li>Mobilization and Demobilization is not in our scope.</li>
-      <li>The charges mentioned above is only for equipment rental and does not include training/engineering service.</li>
-      <li>Any damage of equipment or missing accessories will be chargeable.</li>
-      <li>Payment terms: 100% equipment return time Cash/CDC.</li>
-      <li>Formal LPO / email confirmation specifying your requirement schedule only shall be considered for booking the equipment.</li>
-      <li>The availability of the equipment should be checked at least 1 week before your requirement schedule.</li>
-      <li>Above offer validity for 30 days.</li>
-    </ol>
-  </div>
-
-  <div class="signature-block">
-    <div class="signature-line">For and on behalf of Borge Equipment Rental</div>
-    <div class="system-generated-note">System generated — valid without signature.</div>
-  </div>
-
 </body>
 </html>

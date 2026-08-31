@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.borge.equipmentrental",
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "",
-    "devUrl": null,
-    "frontendDist": "../src"
+    "beforeDevCommand": "npm run dev:vite",
+    "beforeBuildCommand": "npm run build:vite",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
   },
   "app": {
     "withGlobalTauri": true,

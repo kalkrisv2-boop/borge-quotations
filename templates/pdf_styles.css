@@ -1,353 +1,540 @@
 /* templates/pdf_styles.css */
-/* ==========================================
-   PURE CSS PAGED MEDIA ENGINE RULES
-   ========================================== */
+/* Phase 2.2 — Corporate branded PDF stylesheet for Borge Equipment Rental */
+/* Color Palette: Red #C0263E | Gold #E2B808 | Navy #0B5DA7 | Gray #F4F6F8 */
+/* Strict single-page layout — no overflow beyond A4 */
+
+/* ============================================================
+   PAGE SETUP & GLOBAL STYLES
+   ============================================================ */
+
 @page {
-  size: A4 portrait;
-  margin: 15mm 15mm 12mm 15mm;
-
-  @top-left {
-    content: "BORGE — Equipment Hire & Logistics";
-    font-family: 'Inter', sans-serif;
-    font-size: 8pt;
-    color: #555555;
-  }
-
-  @top-right {
-    content: "بورج لتأجير المعدات";
-    font-family: 'Cairo', sans-serif;
-    font-size: 8pt;
-    direction: rtl;
-    color: #555555;
-  }
-
-  @bottom-right {
-    content: "Page " counter(page) " of " counter(pages);
-    font-family: 'Inter', sans-serif;
-    font-size: 8pt;
-    color: #555555;
-  }
-
-  @bottom-left {
-    content: "Borge Equipment Rental L.L.C.";
-    font-family: 'Inter', sans-serif;
-    font-size: 8pt;
-    color: #555555;
-  }
+    size: A4;
+    margin: 10mm;
+    orphans: 3;
+    widows: 3;
 }
 
 @page :first {
-  @top-left { content: ""; }
-  @top-right { content: ""; }
-  margin-top: 12mm;
+    margin-top: 10mm;
 }
 
 * {
-  box-sizing: border-box;
-  -webkit-print-color-adjust: exact !important;
-  print-color-adjust: exact !important;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
 }
 
+html,
 body {
-  margin: 0;
-  padding: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  font-size: 9.5pt;
-  line-height: 1.4;
-  color: #111111;
-  background-color: #ffffff;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 10pt;
+    line-height: 1.3;
+    color: #2c3e50;
+    background-color: #ffffff;
+    width: 100%;
+    height: 100%;
 }
 
-.header-container {
-  display: table;
-  width: 100%;
-  border-bottom: 2px solid #000000;
-  padding-bottom: 6px;
-  margin-bottom: 8px;
-  break-inside: avoid !important;
-  page-break-inside: avoid !important;
+/* ============================================================
+   LETTERHEAD & HEADER
+   ============================================================ */
+
+.letterhead {
+    border-bottom: 2px solid #C0263E;
+    padding-bottom: 3pt;
+    margin-bottom: 4pt;
+    page-break-after: avoid;
 }
 
-.header-row {
-  display: table-row;
+.letterhead-content {
+    display: flex;
+    gap: 16pt;
+    align-items: flex-start;
 }
 
-.header-col-left {
-  display: table-cell;
-  width: 38%;
-  vertical-align: top;
-  text-align: left;
+.logo-section {
+    flex-shrink: 0;
+    width: auto;
 }
 
-.header-col-center {
-  display: table-cell;
-  width: 24%;
-  vertical-align: top;
-  text-align: center;
+.company-logo {
+    max-height: 50pt;
+    max-width: 140pt;
+    width: auto;
+    height: auto;
+    display: block;
+    object-fit: contain;
 }
 
-.header-col-right {
-  display: table-cell;
-  width: 38%;
-  vertical-align: top;
-  text-align: right;
+.company-info {
+    flex: 1;
 }
 
-.company-title-en {
-  font-size: 11pt;
-  font-weight: 700;
-  text-transform: uppercase;
-  line-height: 1.2;
-  color: #000000;
+.company-name-en {
+    font-size: 15pt;
+    font-weight: 700;
+    color: #C0263E;
+    margin: 0 0 1pt 0;
+    line-height: 1.15;
 }
 
-.company-sub-en {
-  font-size: 8pt;
-  font-weight: 600;
-  color: #333333;
+.company-name-ar {
+    font-size: 10pt;
+    color: #0B5DA7;
+    margin: 0 0 3pt 0;
+    direction: rtl;
+    text-align: right;
+    font-weight: 600;
 }
 
-.company-title-ar {
-  font-family: 'Cairo', 'Amiri', serif;
-  font-size: 10.5pt;
-  font-weight: 700;
-  line-height: 1.3;
-  direction: rtl;
-  unicode-bidi: isolate;
-  color: #000000;
+.contact-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2pt 12pt;
+    font-size: 8pt;
 }
 
-.company-sub-ar {
-  font-family: 'Amiri', 'Cairo', serif;
-  font-size: 9pt;
-  font-weight: 600;
-  direction: rtl;
-  unicode-bidi: isolate;
-  color: #333333;
+.contact-item {
+    display: flex;
+    flex-direction: column;
 }
 
-.doc-title {
-  font-size: 14pt;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  margin-top: 4px;
-  text-transform: uppercase;
-  color: #000000;
+.contact-item.contact-full {
+    grid-column: 1 / -1;
 }
 
-.meta-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 12px;
-  break-inside: avoid !important;
-  page-break-inside: avoid !important;
+.contact-item .label {
+    font-weight: 600;
+    color: #0B5DA7;
+    margin-bottom: 1pt;
 }
 
-.meta-table td {
-  vertical-align: top;
-  padding: 3px 4px;
-  font-size: 9pt;
+.contact-item .value {
+    color: #2c3e50;
+    line-height: 1.3;
 }
 
-.meta-label {
-  font-weight: 600;
-  color: #444444;
-  width: 18%;
+/* ============================================================
+   QUOTATION HEADER
+   ============================================================ */
+
+.quote-header {
+    background-color: #F4F6F8;
+    padding: 4pt 12pt;
+    margin-bottom: 5pt;
+    border-left: 4px solid #C0263E;
+    page-break-after: avoid;
 }
 
-.meta-value {
-  font-weight: 500;
-  color: #000000;
-  width: 32%;
+.quote-title {
+    margin-bottom: 8pt;
 }
 
-.intro-text {
-  margin-bottom: 12px;
-  font-size: 9pt;
+.quote-title h2 {
+    font-size: 16pt;
+    font-weight: 700;
+    color: #C0263E;
+    margin: 0;
 }
 
-.items-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 0px;
+.quote-ref-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8pt;
+    font-size: 9pt;
 }
 
-.items-table thead {
-  display: table-header-group;
+.ref-item {
+    display: flex;
+    flex-direction: column;
 }
 
-.items-table tr {
-  break-inside: avoid !important;
-  page-break-inside: avoid !important;
+.ref-label {
+    font-weight: 600;
+    color: #0B5DA7;
+    margin-bottom: 2pt;
 }
 
-.items-table th {
-  background-color: #f2f2f2;
-  color: #000000;
-  font-weight: 700;
-  font-size: 8.5pt;
-  text-align: left;
-  padding: 6px 8px;
-  border: 1px solid #cccccc;
-  text-transform: uppercase;
+.ref-value {
+    color: #2c3e50;
+    font-weight: 500;
 }
 
-.items-table td {
-  padding: 6px 8px;
-  border: 1px solid #cccccc;
-  font-size: 8.5pt;
-  vertical-align: top;
+/* ============================================================
+   CLIENT INFORMATION
+   ============================================================ */
+
+.client-info {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8pt;
+    margin-bottom: 5pt;
+    font-size: 8pt;
+    page-break-after: avoid;
 }
 
-.col-no { width: 5%; text-align: center; }
-.col-desc { width: 45%; }
-.col-make { width: 25%; }
-.col-qty { width: 8%; text-align: center; }
-.col-rate { width: 17%; text-align: right; }
-
-.item-sub-list {
-  margin: 3px 0 0 0;
-  padding-left: 14px;
-  font-size: 8pt;
-  color: #444444;
+.info-block {
+    padding: 4pt 6pt;
+    border: 1px solid #E2B808;
+    border-left: 3px solid #E2B808;
+    background-color: #fffbf5;
 }
 
-.spec-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-  margin-bottom: 4px;
+.info-block h3 {
+    font-size: 10pt;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin-bottom: 6pt;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
-.spec-badge {
-  display: inline-block;
-  background-color: #f0f4f8;
-  border: 1px solid #d0d7de;
-  border-radius: 3px;
-  padding: 1px 4px;
-  font-size: 7.5pt;
+.info-block p {
+    margin-bottom: 2pt;
+    color: #2c3e50;
+    line-height: 1.25;
 }
 
-.spec-key {
-  font-weight: 600;
-  color: #333333;
+.info-block p:last-child {
+    margin-bottom: 0;
 }
 
-.spec-val {
-  font-weight: 400;
-  color: #111111;
+.client-name {
+    font-weight: 600;
+    font-size: 10pt;
 }
 
-.totals-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: -1px;
-  margin-bottom: 15px;
-  break-inside: avoid !important;
-  page-break-inside: avoid !important;
+/* ============================================================
+   LINE ITEMS TABLE
+   ============================================================ */
+
+.line-items-section {
+    margin-bottom: 12pt;
+    page-break-inside: avoid;
 }
 
-.totals-table td {
-  padding: 5px 8px;
-  font-size: 8.5pt;
-  border: 1px solid #cccccc;
+.line-items-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 7.5pt;
+    line-height: 1.2;
+    margin-bottom: 0;
+    table-layout: fixed;
 }
 
-.totals-label {
-  width: 83%;
-  text-align: right;
-  font-weight: 600;
-  color: #333333;
+.line-items-table thead {
+    background-color: #C0263E;
+    color: #ffffff;
+    font-weight: 700;
 }
 
-.totals-value {
-  width: 17%;
-  text-align: right;
-  font-weight: 600;
-  color: #111111;
+.line-items-table th {
+    padding: 3pt 3pt;
+    text-align: left;
+    border: 1px solid #C0263E;
+    font-size: 7.5pt;
+    font-weight: 700;
 }
 
-.subtotal-row td {
-  background-color: #ffffff;
+.line-items-table td {
+    padding: 2pt 3pt;
+    border: 1px solid #e0e3e8;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
 }
 
-.vat-row td {
-  background-color: #ffffff;
+.line-items-table tbody tr.zebra {
+    background-color: #F4F6F8;
 }
 
-.grand-total-row {
-  break-inside: avoid !important;
-  page-break-inside: avoid !important;
+.line-items-table tbody tr {
+    page-break-inside: avoid;
 }
 
-.grand-total-row td {
-  background-color: #f9f9f9;
-  border-top: 2px solid #000000;
-  border-bottom: 2px double #000000;
-  font-size: 9.5pt;
+/* Table column widths */
+.col-item {
+    width: 15%;
 }
 
-.grand-total-row .totals-label {
-  font-weight: 800;
-  color: #000000;
-  text-transform: uppercase;
+.col-make {
+    width: 10%;
 }
 
-.grand-total-row .totals-value {
-  font-weight: 800;
-  color: #000000;
+.col-specs {
+    width: 21%;
 }
 
-.note-box {
-  background-color: #f9f9f9;
-  border-left: 3px solid #333333;
-  padding: 6px 10px;
-  margin-bottom: 12px;
-  font-size: 8pt;
-  line-height: 1.35;
-  break-inside: avoid !important;
-  page-break-inside: avoid !important;
+.col-qty {
+    width: 8%;
+    text-align: center;
 }
 
+.col-rate {
+    width: 15%;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.col-basis {
+    width: 10%;
+    text-align: center;
+}
+
+.col-total {
+    width: 15%;
+    text-align: right;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* ============================================================
+   TOTALS SECTION
+   ============================================================ */
+
+.totals-section {
+    margin-bottom: 5pt;
+    page-break-after: avoid;
+}
+
+.totals-container {
+    display: flex;
+    flex-direction: column;
+    width: 40%;
+    margin-left: auto;
+}
+
+.totals-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3pt 8pt;
+    border: 1px solid #e0e3e8;
+    border-bottom: none;
+    font-size: 9pt;
+    background-color: #ffffff;
+}
+
+.totals-row:last-child {
+    border-bottom: 1px solid #e0e3e8;
+}
+
+.totals-row .label {
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.totals-row .value {
+    font-weight: 600;
+    color: #2c3e50;
+    text-align: right;
+}
+
+.totals-row.totals-grand {
+    background-color: #C0263E;
+    color: #ffffff;
+    border: 2px solid #E2B808;
+    font-size: 10pt;
+    padding: 5pt 12pt;
+}
+
+.totals-row.totals-grand .label,
+.totals-row.totals-grand .value {
+    color: #ffffff;
+    font-weight: 700;
+}
+
+/* ============================================================
+   RENTAL RATE BASIS LEGEND
+   ============================================================ */
+
+.rate-basis-section {
+    margin-bottom: 2pt;
+    padding: 2pt 10pt;
+    background-color: #fffbf5;
+    border-left: 3px solid #E2B808;
+    font-size: 7.5pt;
+    page-break-inside: avoid;
+}
+
+.rate-basis-section h3 {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin-bottom: 4pt;
+    text-transform: uppercase;
+}
+
+.rate-basis-content {
+    color: #2c3e50;
+    line-height: 1.3;
+}
+
+/* ============================================================
+   NOTES & TERMS
+   ============================================================ */
+
+.notes-section,
 .terms-section {
-  margin-top: 10px;
-  break-inside: avoid !important;
-  page-break-inside: avoid !important;
+    margin-bottom: 3pt;
+    font-size: 7.5pt;
+    page-break-inside: avoid;
 }
 
-.terms-title {
-  font-weight: 700;
-  font-size: 9pt;
-  margin-bottom: 4px;
-  text-decoration: underline;
+.notes-section h3,
+.terms-section h3 {
+    font-size: 8pt;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin-bottom: 2pt;
+    text-transform: uppercase;
 }
 
-.terms-list {
-  margin: 0;
-  padding-left: 16px;
-  font-size: 8pt;
-  line-height: 1.35;
+.notes-section p,
+.terms-content {
+    color: #2c3e50;
+    line-height: 1.35;
+    margin-bottom: 0;
 }
 
-.terms-list li {
-  margin-bottom: 3px;
+/* ============================================================
+   FOOTER & SIGNATURE
+   ============================================================ */
+
+@page {
+    @bottom-right {
+        content: 'Page ' counter(page) ' of ' counter(pages);
+        font-size: 8pt;
+        color: #7f8fa3;
+    }
+}
+
+.quote-footer {
+    margin-top: 2pt;
+    padding-top: 2pt;
+    border-top: 2px solid #C0263E;
+    font-size: 8pt;
+    page-break-inside: avoid;
+    page-break-before: avoid;
+}
+
+.footer-content {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 16pt;
+    align-items: flex-start;
 }
 
 .signature-block {
-  margin-top: 10px;
-  break-inside: avoid !important;
-  page-break-inside: avoid !important;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    height: 32pt;
 }
 
-.signature-line {
-  font-size: 8.5pt;
-  font-weight: 600;
-  margin-bottom: 15px;
+.sig-line {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
-.system-generated-note {
-  font-size: 8pt;
-  font-style: italic;
-  color: #666666;
+.sig-line .label {
+    font-weight: 600;
+    color: #2c3e50;
+    font-size: 8pt;
+    margin-bottom: 2pt;
+}
+
+.sig-space {
+    border-top: 1px solid #2c3e50;
+    width: 120pt;
+    margin: 12pt 0 0 0;
+}
+
+.sig-date {
+    font-size: 7.5pt;
+    color: #2c3e50;
+    text-align: center;
+    margin-top: 2pt;
+}
+
+.stamp-block {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 50pt;
+    height: 50pt;
+}
+
+.stamp-placeholder {
+    border: 2px dashed #C0263E;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 7pt;
+    color: #C0263E;
+    font-weight: 600;
+    text-align: center;
+}
+
+.disclaimer {
+    text-align: right;
+    font-size: 8pt;
+    color: #C0263E;
+    font-weight: 600;
+    line-height: 1.3;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+/* ============================================================
+   UTILITY CLASSES & RESPONSIVE
+   ============================================================ */
+
+.hidden-print {
+    display: none !important;
+}
+
+/* Prevent orphans/widows in lists */
+ul,
+ol {
+    page-break-inside: avoid;
+}
+
+li {
+    page-break-inside: avoid;
+}
+
+/* Ensure images don't overflow */
+img {
+    max-width: 100%;
+    height: auto;
+    page-break-inside: avoid;
+}
+
+/* Prevent table/section breaks at bad locations */
+table {
+    page-break-inside: avoid;
+}
+
+/* ============================================================
+   PRINT MEDIA QUERY (if needed for web preview)
+   ============================================================ */
+
+@media print {
+    body {
+        margin: 0;
+        padding: 0;
+    }
+    /* Removed: page-break-after:always on .quote-document served no purpose
+       (there is nothing after the document to break before) and was pure
+       dead weight. Not the cause of the overflow found in Session 2.2 audit,
+       but removed as it had no correct function. */
+}
+
+/* Currency formatting helper (inline styles via template engine) */
+.currency {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
