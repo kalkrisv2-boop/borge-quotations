@@ -1,23 +1,23 @@
 // src/components/QuoteLineItemEditor.tsx
-// Promoted (this session) from QuoteLineItemEditor.example.tsx to a real,
-// mounted production component — see App.tsx.
+// Phase 3.1 Update: Integrated tiered rental rate matrix engine
 //
-// AUDIT NOTE: this file imports ./QuoteLineItemEditor.module.css, which
-// never existed anywhere in this project's delivery history across any
-// prior session. Would have broken the build the moment this component was
-// actually mounted (which is what's happening now that it's wired into
-// App.tsx). A minimal, functional version of that CSS module is delivered
-// alongside this file.
+// Added:
+//   - rental_duration_days field for calculating applicable rate tier
+//   - Automatic rate_basis determination based on duration (Daily/Weekly/Monthly)
+//   - Automatic unit_rate selection from asset's default rates
+//   - End-to-end integration with rate-matrix engine
 //
-// Still NOT a complete quote-builder: single line item only, no
-// persistence, no IPC/API save call. Sufficient to prove AssetPicker's
-// end-to-end field population; not sufficient to ship as a real feature.
+// Previous notes (still applicable):
+// Promoted (Session 10) from QuoteLineItemEditor.example.tsx to a real,
+// mounted production component — see App.tsx. CSS module was missing
+// and has been provided in Session 10. Single line item only, no
+// persistence, no IPC/API save call yet. Sufficient to prove end-to-end
+// field population and rate tier calculation.
 
 import React, { useState } from 'react';
 import { AssetPicker, Asset } from './AssetPicker';
-// AUDIT FIX (Session 9): same broken-path defect as AssetPicker.tsx — corrected
-// to the real canonical bridge location (src-shared/tauri-bridge.js).
 import { populateQuoteItemFromAsset } from '../../src-shared/tauri-bridge';
+import { calculateRateMatrix, calculateLineTotal as calculateLineTotalFromEngine } from '../../src-shared/rate-matrix';
 import styles from './QuoteLineItemEditor.module.css';
 
 export interface QuoteLineItem {
@@ -29,6 +29,7 @@ export interface QuoteLineItem {
     quantity: number;
     unit_rate: number;
     rate_basis: 'Daily' | 'Weekly' | 'Monthly';
+    rental_duration_days: number; // Phase 3.1: duration in days determines rate tier
     line_total: number;
     equipment_spec?: string;
 }
@@ -51,6 +52,7 @@ export const QuoteLineItemEditor: React.FC<QuoteLineItemEditorProps> = ({
     onCancel,
 }) => {
     const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
+    const [durationError, setDurationError] = useState<string | null>(null);
     const [formData, setFormData] = useState<Partial<QuoteLineItem>>({
         quote_id: quoteId,
         item_order: itemOrder,
@@ -59,6 +61,7 @@ export const QuoteLineItemEditor: React.FC<QuoteLineItemEditorProps> = ({
         quantity: initialItem?.quantity || 1,
         unit_rate: initialItem?.unit_rate || 0,
         rate_basis: initialItem?.rate_basis || 'Monthly',
+        rental_duration_days: initialItem?.rental_duration_days || 30, // Phase 3.1: default 30 days
         equipment_spec: initialItem?.equipment_spec,
     });
 
@@ -79,45 +82,86 @@ export const QuoteLineItemEditor: React.FC<QuoteLineItemEditorProps> = ({
     };
 
     /**
-     * Handle rate_basis change
-     * Updates unit_rate to match the new basis (from asset's default rates)
+     * Phase 3.1: Handle rental duration change
+     * Auto-recalculates rate_basis and unit_rate based on duration
      */
-    const handleRateBasisChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const newBasis = e.target.value as 'Daily' | 'Weekly' | 'Monthly';
+    const handleDurationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const durationDays = parseInt(e.target.value, 10) || 0;
 
-        setFormData((prev) => ({
-            ...prev,
-            rate_basis: newBasis,
-        }));
-
-        // If an asset is selected, update the unit_rate to match the new basis
-        if (selectedAsset) {
-            let newRate = 0;
-            switch (newBasis) {
-                case 'Daily':
-                    newRate = selectedAsset.default_daily_rate;
-                    break;
-                case 'Weekly':
-                    newRate = selectedAsset.default_weekly_rate;
-                    break;
-                case 'Monthly':
-                default:
-                    newRate = selectedAsset.default_monthly_rate;
-                    break;
-            }
-
+        if (!selectedAsset || durationDays < 1) {
+            // AUDIT FIX (re-applied Session 12 — was missing from the "corrected"
+            // delivery despite WORKER_CARRYOVER claiming it was already included):
+            // clear stale rate_basis/unit_rate instead of leaving last-valid values
+            // on screen, and surface a real error instead of console-only.
+            setDurationError(
+                !selectedAsset
+                    ? 'Select an asset before entering a rental duration.'
+                    : 'Rental duration must be at least 1 day.'
+            );
             setFormData((prev) => ({
                 ...prev,
-                unit_rate: newRate,
+                rental_duration_days: durationDays,
+                rate_basis: undefined,
+                unit_rate: 0,
+            }));
+            return;
+        }
+
+        // Calculate new tier and unit_rate based on duration
+        try {
+            const matrix = calculateRateMatrix(durationDays, {
+                default_daily_rate: selectedAsset.default_daily_rate,
+                default_weekly_rate: selectedAsset.default_weekly_rate,
+                default_monthly_rate: selectedAsset.default_monthly_rate,
+            });
+
+            setDurationError(null);
+            setFormData((prev) => ({
+                ...prev,
+                rental_duration_days: durationDays,
+                rate_basis: matrix.rateBasis,
+                unit_rate: matrix.unitRate,
+            }));
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Invalid rental duration.';
+            console.warn('Invalid rental duration:', err);
+            setDurationError(message);
+            setFormData((prev) => ({
+                ...prev,
+                rental_duration_days: durationDays,
+                rate_basis: undefined,
+                unit_rate: 0,
             }));
         }
     };
 
     /**
-     * Calculate line total as quantity * unit_rate
+     * Calculate line total as quantity × unit_rate.
+     *
+     * AUDIT FIX (re-applied Session 12): this previously shadowed the imported,
+     * tested `calculateLineTotal` from src-shared/rate-matrix.ts with a same-named
+     * local const — legal JS/TS shadowing, so it compiled silently, but it meant
+     * the 15 dedicated calculateLineTotal unit tests never covered what the UI
+     * displays, and `formData.quantity || 1` silently treated a quantity of 0 as 1
+     * in the live total. This now calls the real, tested engine function.
      */
-    const calculateLineTotal = (): number => {
-        return (formData.quantity || 1) * (formData.unit_rate || 0);
+    const computeDisplayedLineTotal = (): number => {
+        if (!selectedAsset || !formData.quantity || formData.quantity < 1) {
+            return 0;
+        }
+        try {
+            return calculateLineTotalFromEngine(
+                formData.quantity,
+                formData.rental_duration_days || 0,
+                {
+                    default_daily_rate: selectedAsset.default_daily_rate,
+                    default_weekly_rate: selectedAsset.default_weekly_rate,
+                    default_monthly_rate: selectedAsset.default_monthly_rate,
+                }
+            );
+        } catch {
+            return 0;
+        }
     };
 
     /**
@@ -136,6 +180,11 @@ export const QuoteLineItemEditor: React.FC<QuoteLineItemEditorProps> = ({
             return;
         }
 
+        if ((formData.rental_duration_days || 0) < 1) {
+            alert('Rental duration must be at least 1 day');
+            return;
+        }
+
         if ((formData.unit_rate || 0) < 0) {
             alert('Unit rate cannot be negative');
             return;
@@ -150,7 +199,8 @@ export const QuoteLineItemEditor: React.FC<QuoteLineItemEditorProps> = ({
             quantity: formData.quantity || 1,
             unit_rate: formData.unit_rate || 0,
             rate_basis: formData.rate_basis || 'Monthly',
-            line_total: calculateLineTotal(),
+            rental_duration_days: formData.rental_duration_days || 30,
+            line_total: computeDisplayedLineTotal(),
             equipment_spec: formData.equipment_spec,
         };
 
@@ -226,7 +276,9 @@ export const QuoteLineItemEditor: React.FC<QuoteLineItemEditorProps> = ({
                 )}
 
                 {/* ============================================================
-                    QUANTITY & RATE FIELDS
+                    QUANTITY & RENTAL DURATION & RATE FIELDS
+                    Phase 3.1: Added rental_duration_days field which drives
+                    automatic rate tier calculation
                     ============================================================ */}
                 <div className={styles.formRow}>
                     <div className={styles.formGroup}>
@@ -247,41 +299,43 @@ export const QuoteLineItemEditor: React.FC<QuoteLineItemEditorProps> = ({
                     </div>
 
                     <div className={styles.formGroup}>
-                        <label htmlFor="rateBasis">Rate Basis *</label>
-                        <select
-                            id="rateBasis"
-                            value={formData.rate_basis || 'Monthly'}
-                            onChange={handleRateBasisChange}
+                        <label htmlFor="rentalDuration">Rental Duration (days) *</label>
+                        <input
+                            id="rentalDuration"
+                            type="number"
+                            min="1"
+                            value={formData.rental_duration_days || 30}
+                            onChange={handleDurationChange}
+                            placeholder="e.g., 5, 15, 30"
                             required
-                        >
-                            <option value="Daily">Daily</option>
-                            <option value="Weekly">Weekly</option>
-                            <option value="Monthly">Monthly</option>
-                        </select>
+                        />
+                        {durationError ? (
+                            <div className={styles.errorText}>{durationError}</div>
+                        ) : (
+                            <div className={styles.helpText}>
+                                Determines: {formData.rate_basis} tier
+                            </div>
+                        )}
                     </div>
 
                     <div className={styles.formGroup}>
-                        <label htmlFor="unitRate">Unit Rate (AED) *</label>
-                        <input
-                            id="unitRate"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={formData.unit_rate || 0}
-                            onChange={(e) =>
-                                setFormData((prev) => ({
-                                    ...prev,
-                                    unit_rate: parseFloat(e.target.value) || 0,
-                                }))
-                            }
-                            required
-                        />
+                        <label htmlFor="rateBasis">Rate Basis (auto-calculated) *</label>
+                        <div className={styles.readOnlyField}>
+                            {formData.rate_basis || 'Monthly'}
+                        </div>
+                    </div>
+
+                    <div className={styles.formGroup}>
+                        <label htmlFor="unitRate">Unit Rate (AED, auto-calculated) *</label>
+                        <div className={styles.readOnlyField}>
+                            {(formData.unit_rate || 0).toFixed(2)}
+                        </div>
                     </div>
 
                     <div className={styles.formGroup}>
                         <label>Line Total (AED)</label>
                         <div className={styles.lineTotal}>
-                            {calculateLineTotal().toFixed(2)}
+                            {computeDisplayedLineTotal().toFixed(2)}
                         </div>
                     </div>
                 </div>

@@ -1,10 +1,6 @@
 /* src/components/QuoteLineItemEditor.module.css
-   AUDIT NOTE: this file did not exist anywhere in this project's delivery
-   history — QuoteLineItemEditor.example.tsx has imported it since Phase 2.2
-   but nothing ever provided it. Minimal, functional styling only; not a
-   final visual design pass. Kept loosely consistent with AssetPicker's
-   existing palette (navy #0B5DA7, red #C0263E) so the two don't visually
-   clash when rendered together. */
+   Phase 3.1 Update: Added styles for rental duration field and read-only rate basis display.
+   Maintained loosely consistent with AssetPicker's palette (navy #0B5DA7, red #C0263E). */
 
 .editorContainer {
     max-width: 640px;
@@ -68,7 +64,36 @@
 
 .formRow .formGroup {
     flex: 1;
-    min-width: 120px;
+    min-width: 100px;
+}
+
+/* Phase 3.1: Read-only field display for auto-calculated values */
+.readOnlyField {
+    padding: 8px 10px;
+    background-color: #f4f6f8;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #5a6b75;
+    border: 1px solid #d1d8dd;
+    font-weight: 500;
+}
+
+/* Phase 3.1: Help text for duration field (showing which tier applies) */
+.helpText {
+    font-size: 12px;
+    color: #0B5DA7;
+    font-weight: 500;
+    margin-top: 2px;
+}
+
+/* Audit fix (re-applied Session 12): visible error state for invalid rental
+   duration, replacing a console.warn-only failure path that left stale
+   values on screen. */
+.errorText {
+    font-size: 12px;
+    color: #C0263E;
+    font-weight: 600;
+    margin-top: 2px;
 }
 
 .specsDisplay {

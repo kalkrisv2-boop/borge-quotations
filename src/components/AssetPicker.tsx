@@ -302,23 +302,21 @@ export const AssetPicker: React.FC<AssetPickerProps> = ({
                         },
                     });
 
-                    if (response.status === 401 || response.status === 403) {
-                        // A real auth/entitlement rejection — never mask this
-                        // with mock data, in DEV or production.
-                        throw new Error(`HTTP ${response.status}`);
-                    }
+                    // NEW CODE (HTML/JSON Guarded):
+const contentType = response.headers.get('content-type') || '';
+const isJsonResponse = contentType.includes('application/json');
 
-                    if (!response.ok) {
-                        if (!import.meta.env.DEV) {
-                            throw new Error(`HTTP ${response.status}`);
-                        }
-                        console.warn(`API call failed (HTTP ${response.status}), DEV fallback to mock data`);
-                        result = filterMockAssets(query, searchType, tenantId);
-                        setUseMockData(true);
-                    } else {
-                        result = await response.json();
-                        setUseMockData(false);
-                    }
+if (!response.ok || !isJsonResponse) {
+    if (!import.meta.env.DEV) {
+        throw new Error(`API returned invalid response (HTTP ${response.status})`);
+    }
+    console.warn(`API call returned HTML or non-JSON fallback. DEV fallback to mock data.`);
+    result = filterMockAssets(query, searchType, tenantId);
+    setUseMockData(true);
+} else {
+    result = await response.json();
+    setUseMockData(false);
+}
                 }
 
                 setAssets(result || []);
