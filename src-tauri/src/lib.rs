@@ -2,6 +2,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+mod db;
+
+/// Phase R.0: holds the one real SQLite connection the running app uses. Not consumed
+/// by any command yet this phase — R.1-R.3 are what will actually query through this.
+/// Wrapped the same way EntitlementState/SessionState already are (Mutex<T> managed via
+/// tauri::State) for consistency with the existing pattern in this file.
+pub struct DbState(pub Mutex<rusqlite::Connection>);
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IpcResponse {
     pub status: u16,
@@ -61,7 +69,7 @@ fn greet(name: &str) -> String {
 /// re-verify the token's signature offline. For a fully offline desktop
 /// build (no reachable Node backend) this needs a Rust-side HMAC check
 /// against the same secret as auth.js — tracked as an open item for the
-/// Phase 1.3 Worker brief below. Until then, this registration step is the
+/// Phase R.2 Worker brief. Until then, this registration step is the
 /// enforcement boundary and must only ever be called with a token the
 /// frontend has already had verified.
 #[tauri::command]
@@ -197,6 +205,23 @@ pub fn run() {
     tauri::Builder::default()
         .manage(EntitlementState::default())
         .manage(SessionState::default())
+        .setup(|app| {
+            // Phase R.0: open the real SQLite file and run migrations against it, once,
+            // at startup — replacing the in-memory Map that server/ipc_handlers.js used.
+            // No command reads from this connection yet (that starts in R.3); this
+            // setup step only proves the app itself can open and migrate a real,
+            // persistent database file on the actual target platform.
+            use tauri::Manager;
+            let app_data_dir = app
+                .path()
+                .app_data_dir()
+                .expect("could not resolve app_data_dir for the SQLite database");
+            let db_path = db::resolve_db_path(&app_data_dir);
+            let conn = db::init_db(&db_path)
+                .unwrap_or_else(|e| panic!("failed to open/migrate SQLite db at {:?}: {}", db_path, e));
+            app.manage(DbState(Mutex::new(conn)));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             handle_guarded_ipc,

@@ -16,3 +16,26 @@ tauri-build = { version = "2.0.0", features = [] }
 tauri = { version = "2.0.0", features = [] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# --- Phase R.0: added, not yet used by business logic (R.1-R.4 will consume these) ---
+
+# Real SQLite persistence (R.0/R.3). "bundled" compiles SQLite from source instead of
+# linking a system libsqlite3, so the app doesn't depend on whatever (or whether any)
+# SQLite version is installed on the target machine — required for single-binary
+# distribution per the addendum's Phase R decision.
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Crypto for R.2 (password hashing + session tokens). Chose the RustCrypto
+# pbkdf2+hmac+sha2 combination over `ring`: the addendum's Phase R.2 deliverable is
+# specifically "PBKDF2-SHA512 password hashing and HMAC session token issuance", which
+# these crates implement directly and individually (pbkdf2 for hashing, hmac+sha2 for
+# token signing) rather than through ring's more general-purpose, less transparent API.
+# They're also pure-Rust (no bundled C crypto library to cross-compile alongside
+# rusqlite's bundled SQLite), which keeps Phase R.5's multi-platform build simpler.
+pbkdf2 = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+
+# Templating engine for R.4 (PDF template port). Not called anywhere yet this phase —
+# added now only so R.4 doesn't hit a missing-dependency surprise, per the addendum.
+tera = "1"
