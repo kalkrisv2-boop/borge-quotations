@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 mod db;
+mod rate_matrix;
 
 /// Phase R.0: holds the one real SQLite connection the running app uses. Not consumed
 /// by any command yet this phase — R.1-R.3 are what will actually query through this.
