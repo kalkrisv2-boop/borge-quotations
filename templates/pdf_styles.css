@@ -1,267 +1,235 @@
-/* templates/pdf_styles.css */
-/* Phase 2.2 — Corporate branded PDF stylesheet for Borge Equipment Rental */
-/* Color Palette: Red #C0263E | Gold #E2B808 | Navy #0B5DA7 | Gray #F4F6F8 */
-/* Strict single-page layout — no overflow beyond A4 */
+/* templates/pdf_styles.css
+   Phase 1.3–3.2: Paged Media stylesheet for equipment quotation PDF
+   
+   Features:
+   - Multi-page container with page breaks
+   - Arabic company-name header line (Phase 1.3)
+   - Dynamic line-item table with break-inside: avoid
+   - VAT calculation display
+   - Phase 3.2: Rate Basis Legend block styling
+   - No string-set/string() (no browser support); literal-string content only
+*/
 
 /* ============================================================
-   PAGE SETUP & GLOBAL STYLES
+   PAGING & LAYOUT
    ============================================================ */
 
 @page {
     size: A4;
-    margin: 10mm;
-    orphans: 3;
-    widows: 3;
+    margin: 15mm 15mm 20mm 15mm;
+    
+    /* First page: no header/footer (suppressed via CSS) */
+    @first {
+        @top-left {
+            content: none;
+        }
+        @top-center {
+            content: none;
+        }
+        @bottom-center {
+            content: none;
+        }
+    }
+
+    /* Continuation pages: footer with page number */
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 10px;
+        color: #666;
+    }
 }
 
-@page :first {
-    margin-top: 10mm;
-}
-
-* {
+body {
     margin: 0;
     padding: 0;
-    box-sizing: border-box;
-}
-
-html,
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    font-size: 10pt;
-    line-height: 1.3;
+    font-family: Arial, sans-serif;
+    font-size: 11px;
     color: #2c3e50;
     background-color: #ffffff;
-    width: 100%;
-    height: 100%;
+}
+
+.document-body {
+    /* FIXED: previously two hardcoded .page divs with
+       page-break-after: always. Content now flows naturally across
+       as many physical pages as it actually needs; the
+       page-break-inside: avoid rules below (on .line-item-row,
+       .terms-section, .rate-basis-legend-block, .signature-block)
+       keep individual blocks from splitting mid-block without
+       forcing artificial page boundaries elsewhere. */
+    padding: 0;
+    margin: 0;
 }
 
 /* ============================================================
-   LETTERHEAD & HEADER
+   HEADER & METADATA
    ============================================================ */
 
-.letterhead {
-    border-bottom: 2px solid #C0263E;
-    padding-bottom: 3pt;
-    margin-bottom: 4pt;
-    page-break-after: avoid;
+.header-block {
+    margin-bottom: 16px;
+    text-align: center;
+    border-bottom: 2px solid #0B5DA7;
+    padding-bottom: 12px;
 }
 
-.letterhead-content {
-    display: flex;
-    gap: 16pt;
-    align-items: flex-start;
-}
-
-.logo-section {
-    flex-shrink: 0;
-    width: auto;
+.company-header {
+    margin-bottom: 8px;
 }
 
 .company-logo {
-    max-height: 50pt;
-    max-width: 140pt;
-    width: auto;
-    height: auto;
     display: block;
-    object-fit: contain;
-}
-
-.company-info {
-    flex: 1;
+    height: 40px; /* source file is 585x65; scaled by height, width auto-follows aspect ratio */
+    width: auto;
+    margin: 0 auto 6px auto;
 }
 
 .company-name-en {
-    font-size: 15pt;
+    font-size: 16px;
     font-weight: 700;
-    color: #C0263E;
-    margin: 0 0 1pt 0;
-    line-height: 1.15;
-}
-
-.company-name-ar {
-    font-size: 10pt;
     color: #0B5DA7;
-    margin: 0 0 3pt 0;
-    direction: rtl;
-    text-align: right;
-    font-weight: 600;
+    margin: 0 0 4px 0;
 }
 
-.contact-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2pt 12pt;
-    font-size: 8pt;
-}
-
-.contact-item {
-    display: flex;
-    flex-direction: column;
-}
-
-.contact-item.contact-full {
-    grid-column: 1 / -1;
-}
-
-.contact-item .label {
-    font-weight: 600;
-    color: #0B5DA7;
-    margin-bottom: 1pt;
-}
-
-.contact-item .value {
-    color: #2c3e50;
-    line-height: 1.3;
-}
-
-/* ============================================================
-   QUOTATION HEADER
-   ============================================================ */
-
-.quote-header {
-    background-color: #F4F6F8;
-    padding: 4pt 12pt;
-    margin-bottom: 5pt;
-    border-left: 4px solid #C0263E;
-    page-break-after: avoid;
-}
-
-.quote-title {
-    margin-bottom: 8pt;
-}
-
-.quote-title h2 {
-    font-size: 16pt;
-    font-weight: 700;
-    color: #C0263E;
+.company-tagline-en {
+    font-size: 11px;
+    color: #666;
     margin: 0;
 }
 
-.quote-ref-section {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8pt;
-    font-size: 9pt;
-}
-
-.ref-item {
-    display: flex;
-    flex-direction: column;
-}
-
-.ref-label {
+/* Phase 1.3: Arabic company-name line in header */
+.company-header-ar {
+    margin: 8px 0 0 0;
+    padding-top: 6px;
+    border-top: 1px solid #e0e3e8;
+    font-size: 12px;
     font-weight: 600;
     color: #0B5DA7;
-    margin-bottom: 2pt;
 }
 
-.ref-value {
-    color: #2c3e50;
-    font-weight: 500;
-}
-
-/* ============================================================
-   CLIENT INFORMATION
-   ============================================================ */
-
-.client-info {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8pt;
-    margin-bottom: 5pt;
-    font-size: 8pt;
-    page-break-after: avoid;
-}
-
-.info-block {
-    padding: 4pt 6pt;
-    border: 1px solid #E2B808;
-    border-left: 3px solid #E2B808;
-    background-color: #fffbf5;
-}
-
-.info-block h3 {
-    font-size: 10pt;
-    font-weight: 700;
-    color: #0B5DA7;
-    margin-bottom: 6pt;
-    text-transform: uppercase;
+.company-name-ar {
+    margin: 0;
     letter-spacing: 0.5px;
 }
 
-.info-block p {
-    margin-bottom: 2pt;
-    color: #2c3e50;
-    line-height: 1.25;
+.quotation-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin: 6px 0 0 0;
+    letter-spacing: 2px;
 }
 
-.info-block p:last-child {
-    margin-bottom: 0;
+/* ====== Quote Metadata Table ====== */
+
+.quote-metadata {
+    margin: 12px 0 16px 0;
+    border: 1px solid #d1d8dd;
+    border-collapse: collapse;
 }
 
-.client-name {
+.metadata-row {
+    display: flex;
+    border-bottom: 1px solid #e0e3e8;
+}
+
+.metadata-row:last-child {
+    border-bottom: none;
+}
+
+.metadata-cell {
+    flex: 1;
+    padding: 8px 10px;
+    border-right: 1px solid #e0e3e8;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.metadata-cell:last-child {
+    border-right: none;
+}
+
+.metadata-label {
     font-weight: 600;
-    font-size: 10pt;
+    color: #2c3e50;
+    margin-right: 12px;
+}
+
+.metadata-value {
+    color: #5a6b75;
+    text-align: right;
+}
+
+/* ====== Subject Block ====== */
+
+.subject-block {
+    margin: 12px 0;
+    padding: 8px 12px;
+    background-color: #f4f6f8;
+    border-left: 3px solid #0B5DA7;
+}
+
+.subject-text {
+    margin: 0;
+    font-size: 11px;
+    color: #2c3e50;
+    line-height: 1.5;
 }
 
 /* ============================================================
    LINE ITEMS TABLE
    ============================================================ */
 
-.line-items-section {
-    margin-bottom: 12pt;
-    page-break-inside: avoid;
-}
-
 .line-items-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 7.5pt;
-    line-height: 1.2;
-    margin-bottom: 0;
-    table-layout: fixed;
+    margin: 16px 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
 }
 
 .line-items-table thead {
-    background-color: #C0263E;
+    background-color: #0B5DA7;
     color: #ffffff;
-    font-weight: 700;
 }
 
 .line-items-table th {
-    padding: 3pt 3pt;
+    padding: 10px;
     text-align: left;
-    border: 1px solid #C0263E;
-    font-size: 7.5pt;
     font-weight: 700;
+    font-size: 11px;
+    border: 1px solid #0B5DA7;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
 }
 
 .line-items-table td {
-    padding: 2pt 3pt;
-    border: 1px solid #e0e3e8;
-    word-wrap: break-word;
-    overflow-wrap: break-word;
+    padding: 8px 10px;
+    border: 1px solid #d1d8dd;
+    vertical-align: top;
 }
 
-.line-items-table tbody tr.zebra {
-    background-color: #F4F6F8;
+.line-item-row {
+    break-inside: avoid;
 }
 
-.line-items-table tbody tr {
-    page-break-inside: avoid;
+.line-item-row:nth-child(odd) {
+    background-color: #f9f9f9;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
 }
 
-/* Table column widths */
-.col-item {
-    width: 15%;
+/* Table Column Widths */
+.col-no {
+    width: 5%;
+    text-align: center;
 }
 
-.col-make {
-    width: 10%;
+.col-description {
+    width: 35%;
 }
 
-.col-specs {
-    width: 21%;
+.col-make-model {
+    width: 20%;
 }
 
 .col-qty {
@@ -272,19 +240,19 @@ body {
 .col-rate {
     width: 15%;
     text-align: right;
-    white-space: nowrap;
 }
 
-.col-basis {
-    width: 10%;
-    text-align: center;
-}
-
-.col-total {
-    width: 15%;
-    text-align: right;
+/* Item Description & Specs */
+.item-description-main {
     font-weight: 600;
-    white-space: nowrap;
+    margin-bottom: 4px;
+}
+
+.item-specs {
+    font-size: 10px;
+    color: #666;
+    margin-top: 4px;
+    font-style: italic;
 }
 
 /* ============================================================
@@ -292,249 +260,224 @@ body {
    ============================================================ */
 
 .totals-section {
-    margin-bottom: 5pt;
-    page-break-after: avoid;
-}
-
-.totals-container {
-    display: flex;
-    flex-direction: column;
-    width: 40%;
-    margin-left: auto;
+    margin: 16px 0;
+    padding: 12px;
+    border: 1px solid #d1d8dd;
+    background-color: #f4f6f8;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
 }
 
 .totals-row {
     display: flex;
     justify-content: space-between;
-    padding: 3pt 8pt;
-    border: 1px solid #e0e3e8;
-    border-bottom: none;
-    font-size: 9pt;
-    background-color: #ffffff;
+    padding: 6px 0;
+    border-bottom: 1px solid #e0e3e8;
+    font-size: 11px;
 }
 
 .totals-row:last-child {
-    border-bottom: 1px solid #e0e3e8;
+    border-bottom: none;
 }
 
-.totals-row .label {
+.totals-label {
     font-weight: 600;
     color: #2c3e50;
 }
 
-.totals-row .value {
-    font-weight: 600;
-    color: #2c3e50;
+.totals-value {
     text-align: right;
+    color: #5a6b75;
+    font-family: 'Courier New', monospace;
 }
 
-.totals-row.totals-grand {
-    background-color: #C0263E;
-    color: #ffffff;
-    border: 2px solid #E2B808;
-    font-size: 10pt;
-    padding: 5pt 12pt;
-}
-
-.totals-row.totals-grand .label,
-.totals-row.totals-grand .value {
-    color: #ffffff;
+.totals-grand-total {
+    background-color: #ffffff;
+    font-size: 12px;
     font-weight: 700;
-}
-
-/* ============================================================
-   RENTAL RATE BASIS LEGEND
-   ============================================================ */
-
-.rate-basis-section {
-    margin-bottom: 2pt;
-    padding: 2pt 10pt;
-    background-color: #fffbf5;
-    border-left: 3px solid #E2B808;
-    font-size: 7.5pt;
-    page-break-inside: avoid;
-}
-
-.rate-basis-section h3 {
-    font-size: 9pt;
-    font-weight: 700;
-    color: #0B5DA7;
-    margin-bottom: 4pt;
-    text-transform: uppercase;
-}
-
-.rate-basis-content {
-    color: #2c3e50;
-    line-height: 1.3;
-}
-
-/* ============================================================
-   NOTES & TERMS
-   ============================================================ */
-
-.notes-section,
-.terms-section {
-    margin-bottom: 3pt;
-    font-size: 7.5pt;
-    page-break-inside: avoid;
-}
-
-.notes-section h3,
-.terms-section h3 {
-    font-size: 8pt;
-    font-weight: 700;
-    color: #0B5DA7;
-    margin-bottom: 2pt;
-    text-transform: uppercase;
-}
-
-.notes-section p,
-.terms-content {
-    color: #2c3e50;
-    line-height: 1.35;
-    margin-bottom: 0;
-}
-
-/* ============================================================
-   FOOTER & SIGNATURE
-   ============================================================ */
-
-@page {
-    @bottom-right {
-        content: 'Page ' counter(page) ' of ' counter(pages);
-        font-size: 8pt;
-        color: #7f8fa3;
-    }
-}
-
-.quote-footer {
-    margin-top: 2pt;
-    padding-top: 2pt;
+    color: #C0263E;
+    padding: 8px 0;
+    margin-top: 4px;
     border-top: 2px solid #C0263E;
-    font-size: 8pt;
-    page-break-inside: avoid;
-    page-break-before: avoid;
+    border-bottom: none;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
 }
 
-.footer-content {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    gap: 16pt;
-    align-items: flex-start;
+.totals-grand-total .totals-value {
+    color: #C0263E;
 }
+
+/* ============================================================
+   TERMS & CONDITIONS
+   ============================================================ */
+
+.terms-section {
+    margin: 16px 0;
+    page-break-inside: avoid;
+}
+
+.terms-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin: 0 0 8px 0;
+    border-bottom: 1px solid #e0e3e8;
+    padding-bottom: 4px;
+}
+
+.terms-list {
+    margin: 8px 0;
+    padding-left: 20px;
+    font-size: 10px;
+    line-height: 1.5;
+    color: #5a6b75;
+}
+
+.terms-list li {
+    margin-bottom: 6px;
+}
+
+/* ============================================================
+   PHASE 3.2: RATE BASIS LEGEND
+   ============================================================ */
+
+.rate-basis-legend-block {
+    margin: 20px 0 16px 0;
+    padding: 12px;
+    border: 1px solid #d1d8dd;
+    background-color: #f9f9f9;
+    page-break-inside: avoid;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+.legend-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin: 0 0 8px 0;
+    border-bottom: 1px solid #e0e3e8;
+    padding-bottom: 4px;
+}
+
+.legend-list {
+    margin: 8px 0;
+    padding-left: 20px;
+    font-size: 10px;
+    line-height: 1.6;
+    color: #2c3e50;
+}
+
+.legend-list li {
+    margin-bottom: 4px;
+    break-inside: avoid;
+}
+
+.legend-list strong {
+    color: #0B5DA7;
+}
+
+.legend-note {
+    margin: 8px 0 0 0;
+    font-size: 9px;
+    color: #999;
+    font-style: italic;
+    line-height: 1.4;
+}
+
+/* ============================================================
+   SIGNATURE BLOCK
+   ============================================================ */
 
 .signature-block {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    height: 32pt;
-}
-
-.sig-line {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
-
-.sig-line .label {
-    font-weight: 600;
-    color: #2c3e50;
-    font-size: 8pt;
-    margin-bottom: 2pt;
-}
-
-.sig-space {
-    border-top: 1px solid #2c3e50;
-    width: 120pt;
-    margin: 12pt 0 0 0;
-}
-
-.sig-date {
-    font-size: 7.5pt;
-    color: #2c3e50;
+    margin: 20px 0;
+    padding: 12px;
     text-align: center;
-    margin-top: 2pt;
+    border-top: 1px solid #e0e3e8;
+    page-break-inside: avoid;
 }
 
-.stamp-block {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 50pt;
-    height: 50pt;
-}
-
-.stamp-placeholder {
-    border: 2px dashed #C0263E;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 7pt;
-    color: #C0263E;
+.signature-authority {
     font-weight: 600;
-    text-align: center;
+    margin: 0 0 6px 0;
+    font-size: 11px;
 }
 
-.disclaimer {
-    text-align: right;
-    font-size: 8pt;
-    color: #C0263E;
-    font-weight: 600;
-    line-height: 1.3;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
+.signature-name {
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    color: #0B5DA7;
+}
+
+.signature-note {
+    font-size: 10px;
+    color: #666;
+    margin: 0;
+    font-style: italic;
 }
 
 /* ============================================================
-   UTILITY CLASSES & RESPONSIVE
+   FOOTER
    ============================================================ */
 
-.hidden-print {
-    display: none !important;
+.footer-block {
+    margin-top: 16px;
+    padding-top: 8px;
+    border-top: 1px solid #d1d8dd;
+    text-align: center;
 }
 
-/* Prevent orphans/widows in lists */
-ul,
-ol {
-    page-break-inside: avoid;
+.footer-text {
+    margin: 0;
+    font-size: 10px;
+    color: #999;
+    font-style: italic;
 }
 
-li {
-    page-break-inside: avoid;
+.page-number {
+    /* Placeholder for dynamic page numbering */
 }
 
-/* Ensure images don't overflow */
-img {
-    max-width: 100%;
-    height: auto;
-    page-break-inside: avoid;
-}
+/* ============================================================
+   PAGE BREAKS & ORPHAN/WIDOW CONTROL
+   ============================================================ */
 
-/* Prevent table/section breaks at bad locations */
 table {
     page-break-inside: avoid;
 }
 
-/* ============================================================
-   PRINT MEDIA QUERY (if needed for web preview)
-   ============================================================ */
-
-@media print {
-    body {
-        margin: 0;
-        padding: 0;
-    }
-    /* Removed: page-break-after:always on .quote-document served no purpose
-       (there is nothing after the document to break before) and was pure
-       dead weight. Not the cause of the overflow found in Session 2.2 audit,
-       but removed as it had no correct function. */
+/* Ensure no section starts with <2 lines of content on same page */
+.page-first-header,
+.page-first-metadata,
+.page-first-content {
+    page-break-inside: avoid;
 }
 
-/* Currency formatting helper (inline styles via template engine) */
-.currency {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
+/* Suppress continuation page headers */
+@page:not(:first) {
+    @top-left {
+        content: none;
+    }
+    @top-center {
+        content: none;
+    }
+}
+
+/* Print-specific optimizations */
+@media print {
+    body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    a {
+        text-decoration: none;
+        color: inherit;
+    }
+
+    .no-print {
+        display: none;
+    }
 }

@@ -11,6 +11,8 @@ declare const styles: {
     readonly formRow: string;
     readonly specsDisplay: string;
     readonly lineTotal: string;
+    readonly readOnlyField: string;
+    readonly errorText: string;
     readonly actions: string;
     readonly buttonSave: string;
     readonly buttonCancel: string;

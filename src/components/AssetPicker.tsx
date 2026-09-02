@@ -308,11 +308,31 @@ export const AssetPicker: React.FC<AssetPickerProps> = ({
                         throw new Error(`HTTP ${response.status}`);
                     }
 
-                    if (!response.ok) {
+                    // BUG FIX: Vite's dev server has no real /api backend and
+                    // returns its SPA-fallback index.html with HTTP 200 for
+                    // any unmatched route — response.ok is true even though
+                    // the body is HTML, not JSON. The old code only checked
+                    // response.ok, so it fell through to response.json() on
+                    // an HTML body and threw "Unexpected token '<'". Checking
+                    // the Content-Type header catches this case (and any
+                    // other non-JSON 200 response) the same way a non-2xx
+                    // status is already handled below.
+                    const contentType = response.headers.get('content-type') || '';
+                    const isJson = contentType.includes('application/json');
+
+                    if (!response.ok || !isJson) {
                         if (!import.meta.env.DEV) {
-                            throw new Error(`HTTP ${response.status}`);
+                            throw new Error(
+                                !response.ok
+                                    ? `HTTP ${response.status}`
+                                    : `Expected JSON response, got Content-Type: '${contentType || 'none'}'`
+                            );
                         }
-                        console.warn(`API call failed (HTTP ${response.status}), DEV fallback to mock data`);
+                        console.warn(
+                            !response.ok
+                                ? `API call failed (HTTP ${response.status}), DEV fallback to mock data`
+                                : `API returned non-JSON response (Content-Type: '${contentType || 'none'}'), DEV fallback to mock data`
+                        );
                         result = filterMockAssets(query, searchType, tenantId);
                         setUseMockData(true);
                     } else {
