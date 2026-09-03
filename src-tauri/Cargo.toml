@@ -36,6 +36,21 @@ pbkdf2 = "0.12"
 hmac = "0.12"
 sha2 = "0.10"
 
+# --- Phase R.2: added, actually used by src/auth.rs this phase ---
+
+# Random salt generation for hash_password (mirrors auth.js's
+# crypto.randomBytes(16).toString('hex')).
+rand = "0.8"
+
+# Hex encode/decode for the "{salt_hex}${hash_hex}" stored password format — matches
+# auth.js's .toString('hex') convention exactly, so hashes are byte-for-byte
+# interchangeable between the Node and Rust implementations.
+hex = "0.4"
+
+# Base64url (no padding) encode/decode for the JWT-shaped session token
+# (header.payload.signature) — matches auth.js's use of Node's base64url encoding.
+base64 = "0.22"
+
 # Templating engine for R.4 (PDF template port). Not called anywhere yet this phase —
 # added now only so R.4 doesn't hit a missing-dependency surprise, per the addendum.
 tera = "1"

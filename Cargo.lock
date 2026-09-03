@@ -158,8 +158,11 @@ dependencies = [
 name = "borge_equipment_rental"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "hex",
  "hmac",
  "pbkdf2",
+ "rand",
  "rusqlite",
  "serde",
  "serde_json",

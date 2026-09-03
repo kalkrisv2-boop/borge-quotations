@@ -2,14 +2,28 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+mod auth;
 mod db;
 mod rate_matrix;
 
-/// Phase R.0: holds the one real SQLite connection the running app uses. Not consumed
-/// by any command yet this phase — R.1-R.3 are what will actually query through this.
-/// Wrapped the same way EntitlementState/SessionState already are (Mutex<T> managed via
-/// tauri::State) for consistency with the existing pattern in this file.
+/// Phase R.0: holds the one real SQLite connection the running app uses.
+/// Phase R.2: now actually read from — `handle_guarded_ipc` and
+/// `admin_seed_entitlements` below query/write the real `tenant_entitlements` table
+/// through this connection via `auth::check_tenant_entitlement` /
+/// `auth::seed_tenant_entitlement`, replacing the old in-memory `EntitlementState`.
 pub struct DbState(pub Mutex<rusqlite::Connection>);
+
+/// HMAC secret used to sign/verify session tokens. Phase R.2 scope note: this phase
+/// ports the *capability* to verify tokens in Rust (`auth::verify_session_token`), but
+/// does not yet change how a token gets here in the first place -- `register_session`
+/// below is unchanged from R.1/R.0 and still trusts a token `server/auth.js` already
+/// verified, for the same reason its original comment gives (the shared HMAC secret
+/// itself wasn't among this phase's delivered files as a concrete runtime value, only
+/// as the algorithm/parameters `auth.js` uses). Wiring `register_session` to actually
+/// call `auth::verify_session_token` against a real shared secret, so Rust stops
+/// trusting an already-verified claim and independently re-verifies it, is left as an
+/// explicit open item for R.5 (full click-through), not silently done here.
+pub struct HmacSecret(pub Vec<u8>);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct IpcResponse {
@@ -18,19 +32,15 @@ pub struct IpcResponse {
     pub data: Option<serde_json::Value>,
 }
 
-/// Canonical entitlement module keys. MUST mirror
-/// server/entitlements.js::CANONICAL_MODULE_KEYS and
-/// PROJECT_BASELINE.md Section 1.3 exactly. Do not invent new ones here.
-const CANONICAL_MODULE_KEYS: [&str; 5] = [
-    "quotes_core",
-    "inventory_specs",
-    "rate_matrix",
-    "compliance_terms",
-    "revision_lpo",
-];
-
 /// Maps an IPC command name to the module_key required to invoke it.
 /// MUST mirror the switch statement in server/ipc_handlers.js.
+///
+/// NOTE (Phase R.2): `CANONICAL_MODULE_KEYS` itself no longer lives here -- it moved to
+/// `auth::CANONICAL_MODULE_KEYS`, the single source of truth, per this phase's brief.
+/// This function stays here because it's about IPC *command routing*, a lib.rs concern,
+/// not an entitlements concern; it references `auth::CANONICAL_MODULE_KEYS` only
+/// implicitly (the strings below must be members of that list, which is checked in
+/// lib.rs's own test module below).
 fn required_module_key(command_name: &str) -> Option<&'static str> {
     match command_name {
         "save_quote" | "fetch_quote" => Some("quotes_core"),
@@ -40,15 +50,15 @@ fn required_module_key(command_name: &str) -> Option<&'static str> {
     }
 }
 
-/// tenant_id -> module_key -> is_enabled
-#[derive(Default)]
-pub struct EntitlementState(pub Mutex<HashMap<String, HashMap<String, bool>>>);
-
 /// session_token -> tenant_id. Populated ONLY by register_session, which is
 /// called by the frontend right after server/auth.js's verifySessionToken
 /// has already confirmed the token server-side. Rust trusts this map
 /// because entries are only ever inserted post-verification — it does not
 /// re-derive trust from an unverified client claim.
+///
+/// Phase R.2 status: unchanged this phase (see `HmacSecret` doc comment above for why
+/// it wasn't folded into the new `auth::verify_session_token` path yet). Left in place
+/// deliberately rather than half-migrated.
 #[derive(Default)]
 pub struct SessionState(pub Mutex<HashMap<String, String>>);
 
@@ -65,14 +75,9 @@ fn greet(name: &str) -> String {
 
 /// KNOWN LIMITATION — flagged, not silently assumed correct: this trusts a
 /// token that was already verified by server/auth.js elsewhere in the
-/// stack. server/auth.js (its HMAC secret and exact token wire-format) was
-/// not among this phase's delivered files, so Rust cannot yet independently
-/// re-verify the token's signature offline. For a fully offline desktop
-/// build (no reachable Node backend) this needs a Rust-side HMAC check
-/// against the same secret as auth.js — tracked as an open item for the
-/// Phase R.2 Worker brief. Until then, this registration step is the
-/// enforcement boundary and must only ever be called with a token the
-/// frontend has already had verified.
+/// stack. See `HmacSecret` doc comment above -- Rust now *can* verify a token
+/// independently (`auth::verify_session_token`, built and tested this phase), but this
+/// command isn't wired to do so yet; that's an explicit R.5 open item, not an oversight.
 #[tauri::command]
 fn register_session(
     session_token: String,
@@ -98,13 +103,19 @@ fn register_session(
 /// admin_seed_entitlements — WITH the auth check the JS version was
 /// originally missing (see Finding #1 in the Phase 1.2 audit). Requires a
 /// session_token already registered via register_session.
+///
+/// Phase R.2 change: writes now go through `auth::seed_tenant_entitlement` into the
+/// real SQLite `tenant_entitlements` table (via `DbState`) instead of the old
+/// in-memory `EntitlementState` `HashMap`. Unknown `module_key`s are silently skipped,
+/// matching `auth::seed_tenant_entitlement`'s (and `entitlements.js`'s) behavior --
+/// no per-item filtering needed here anymore since that check now lives in one place.
 #[tauri::command]
 fn admin_seed_entitlements(
     session_token: String,
     target_tenant_id: String,
     entitlements: Vec<EntitlementSeedItem>,
     sessions: tauri::State<SessionState>,
-    store: tauri::State<EntitlementState>,
+    db: tauri::State<DbState>,
 ) -> Result<IpcResponse, String> {
     let is_known = sessions.0.lock().unwrap().contains_key(&session_token);
     if !is_known {
@@ -115,12 +126,10 @@ fn admin_seed_entitlements(
         });
     }
 
-    let mut db = store.0.lock().unwrap();
-    let tenant_map = db.entry(target_tenant_id).or_insert_with(HashMap::new);
+    let conn = db.0.lock().unwrap();
     for item in entitlements {
-        if CANONICAL_MODULE_KEYS.contains(&item.module_key.as_str()) {
-            tenant_map.insert(item.module_key, item.is_enabled);
-        }
+        auth::seed_tenant_entitlement(&conn, &target_tenant_id, &item.module_key, item.is_enabled)
+            .map_err(|e| format!("failed to seed entitlement: {}", e))?;
     }
 
     Ok(IpcResponse {
@@ -134,20 +143,21 @@ fn admin_seed_entitlements(
 /// that a session_token string was non-empty and then dispatched EVERY
 /// command with status 200, regardless of command_name or tenant
 /// entitlement — i.e. the desktop IPC boundary performed no entitlement
-/// enforcement at all. This is the exact failure the route-map's Phase 1.2
-/// Completion Check calls out: "API routes AND IPC commands both block
-/// unlicensed calls." The API-route side (server/ipc_handlers.js via
-/// guardApiRoute) was already correct; the IPC side was not. Now looks the
-/// token up in the registered-session map to resolve a trusted tenant_id,
-/// then checks that tenant's entitlement for the command's required
-/// module_key before dispatching.
+/// enforcement at all. Now looks the token up in the registered-session map to resolve
+/// a trusted tenant_id, then checks that tenant's entitlement for the command's
+/// required module_key before dispatching.
+///
+/// Phase R.2 change: the entitlement check itself (previously an in-memory HashMap
+/// lookup against `EntitlementState`) now queries the real SQLite `tenant_entitlements`
+/// table via `auth::check_tenant_entitlement`, backed by `DbState`. The session-lookup
+/// half (`SessionState`) is unchanged this phase -- see `HmacSecret` doc comment.
 #[tauri::command]
 async fn handle_guarded_ipc(
     command_name: String,
     payload: Option<serde_json::Value>,
     session_token: Option<String>,
     sessions: tauri::State<'_, SessionState>,
-    store: tauri::State<'_, EntitlementState>,
+    db: tauri::State<'_, DbState>,
 ) -> Result<IpcResponse, String> {
     let token = match session_token {
         Some(t) if !t.trim().is_empty() => t,
@@ -176,11 +186,8 @@ async fn handle_guarded_ipc(
 
     if let Some(required_key) = required_module_key(&command_name) {
         let allowed = {
-            let db = store.0.lock().unwrap();
-            db.get(&tenant_id)
-                .and_then(|m| m.get(required_key))
-                .copied()
-                .unwrap_or(false)
+            let conn = db.0.lock().unwrap();
+            auth::check_tenant_entitlement(&conn, &tenant_id, required_key).unwrap_or(false)
         };
         if !allowed {
             return Ok(IpcResponse {
@@ -204,14 +211,12 @@ async fn handle_guarded_ipc(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(EntitlementState::default())
         .manage(SessionState::default())
         .setup(|app| {
             // Phase R.0: open the real SQLite file and run migrations against it, once,
-            // at startup — replacing the in-memory Map that server/ipc_handlers.js used.
-            // No command reads from this connection yet (that starts in R.3); this
-            // setup step only proves the app itself can open and migrate a real,
-            // persistent database file on the actual target platform.
+            // at startup. Phase R.2: this connection is now actually queried/written by
+            // handle_guarded_ipc and admin_seed_entitlements above, not just opened and
+            // left unused.
             use tauri::Manager;
             let app_data_dir = app
                 .path()
@@ -253,13 +258,20 @@ mod tests {
         assert_eq!(required_module_key("nonexistent_cmd"), None);
     }
 
+    /// Phase R.2: confirms `required_module_key`'s values are all still real entries in
+    /// the now-single-sourced `auth::CANONICAL_MODULE_KEYS` -- i.e. that removing the
+    /// old duplicated const here didn't silently desync command routing from the list
+    /// that now lives only in auth.rs.
     #[test]
-    fn canonical_keys_are_exactly_five_and_match_baseline() {
-        assert_eq!(CANONICAL_MODULE_KEYS.len(), 5);
-        assert!(CANONICAL_MODULE_KEYS.contains(&"quotes_core"));
-        assert!(CANONICAL_MODULE_KEYS.contains(&"inventory_specs"));
-        assert!(CANONICAL_MODULE_KEYS.contains(&"rate_matrix"));
-        assert!(CANONICAL_MODULE_KEYS.contains(&"compliance_terms"));
-        assert!(CANONICAL_MODULE_KEYS.contains(&"revision_lpo"));
+    fn required_module_key_values_are_all_canonical() {
+        for cmd in ["save_quote", "fetch_quote", "fetch_inventory_specs", "calculate_rate_matrix"] {
+            let key = required_module_key(cmd).unwrap();
+            assert!(
+                auth::CANONICAL_MODULE_KEYS.contains(&key),
+                "{} maps to {}, which is not in auth::CANONICAL_MODULE_KEYS",
+                cmd,
+                key
+            );
+        }
     }
 }
