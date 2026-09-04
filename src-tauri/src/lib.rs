@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 mod auth;
 mod db;
+mod quotes;
 mod rate_matrix;
 
 /// Phase R.0: holds the one real SQLite connection the running app uses.
@@ -50,17 +51,26 @@ fn required_module_key(command_name: &str) -> Option<&'static str> {
     }
 }
 
-/// session_token -> tenant_id. Populated ONLY by register_session, which is
+/// session_token -> (tenant_id, user_id). Populated ONLY by register_session, which is
 /// called by the frontend right after server/auth.js's verifySessionToken
 /// has already confirmed the token server-side. Rust trusts this map
 /// because entries are only ever inserted post-verification — it does not
 /// re-derive trust from an unverified client claim.
 ///
-/// Phase R.2 status: unchanged this phase (see `HmacSecret` doc comment above for why
-/// it wasn't folded into the new `auth::verify_session_token` path yet). Left in place
-/// deliberately rather than half-migrated.
+/// Phase R.2 status: the tenant_id half of this is unchanged (see `HmacSecret` doc
+/// comment above for why it wasn't folded into the new `auth::verify_session_token`
+/// path yet). Left in place deliberately rather than half-migrated.
+///
+/// Phase R.3 addition: the value is now `(tenant_id, user_id)` rather than just
+/// `tenant_id` — `save_quote` needs a `user_id` to satisfy the real `quotes` table's
+/// `user_id NOT NULL` FK, and no other source of a trustworthy user_id exists yet at
+/// this IPC boundary (full independent re-verification of the token, which would derive
+/// both fields from the signed claims instead of trusting the caller, is still the
+/// explicit R.5 open item — see `HmacSecret` doc comment). `register_session`'s
+/// signature grows a `user_id` parameter accordingly; this is flagged in NOTES_R3.md as
+/// a deliberate, minimal expansion of R.3's scope, not a silent one.
 #[derive(Default)]
-pub struct SessionState(pub Mutex<HashMap<String, String>>);
+pub struct SessionState(pub Mutex<HashMap<String, (String, String)>>);
 
 #[derive(Deserialize)]
 struct EntitlementSeedItem {
@@ -82,16 +92,22 @@ fn greet(name: &str) -> String {
 fn register_session(
     session_token: String,
     tenant_id: String,
+    user_id: String,
     sessions: tauri::State<SessionState>,
 ) -> Result<IpcResponse, String> {
-    if session_token.trim().is_empty() || tenant_id.trim().is_empty() {
+    if session_token.trim().is_empty() || tenant_id.trim().is_empty() || user_id.trim().is_empty()
+    {
         return Ok(IpcResponse {
             status: 400,
-            message: "session_token and tenant_id are required".into(),
+            message: "session_token, tenant_id, and user_id are required".into(),
             data: None,
         });
     }
-    sessions.0.lock().unwrap().insert(session_token, tenant_id);
+    sessions
+        .0
+        .lock()
+        .unwrap()
+        .insert(session_token, (tenant_id, user_id));
     Ok(IpcResponse {
         status: 200,
         message: "Session registered".into(),
@@ -170,7 +186,7 @@ async fn handle_guarded_ipc(
         }
     };
 
-    let tenant_id = {
+    let (tenant_id, user_id) = {
         let known = sessions.0.lock().unwrap();
         match known.get(&token) {
             Some(t) => t.clone(),
@@ -201,11 +217,105 @@ async fn handle_guarded_ipc(
         }
     }
 
-    Ok(IpcResponse {
-        status: 200,
-        message: format!("Command '{}' dispatched successfully", command_name),
-        data: payload,
-    })
+    // Phase R.3: real business logic dispatch for save_quote/fetch_quote, reached only
+    // after the entitlement check above has already passed — this is the SAME guard
+    // path every other command goes through (`required_module_key` already mapped both
+    // commands to "quotes_core" before this phase), not a new parallel unguarded route.
+    // Every other command_name (including ones with no required_module_key mapping)
+    // keeps the prior echo-back behavior unchanged; only these two commands' accepted
+    // path now actually does something, closing the exact gap Phase R exists to close.
+    match command_name.as_str() {
+        "save_quote" => {
+            let quote: quotes::QuoteInput = match payload
+                .as_ref()
+                .and_then(|p| p.get("quote"))
+                .and_then(|q| serde_json::from_value(q.clone()).ok())
+            {
+                Some(q) => q,
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Invalid or missing 'quote' payload for save_quote".into(),
+                        data: None,
+                    });
+                }
+            };
+
+            let conn = db.0.lock().unwrap();
+            match quotes::save_quote(&conn, &tenant_id, &user_id, &quote) {
+                Ok(quote_id) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Quote saved".into(),
+                    data: Some(serde_json::json!({
+                        "success": true,
+                        "offer_ref": quote.offer_ref,
+                        "rev_suffix": quote.rev_suffix,
+                        "quote_id": quote_id,
+                    })),
+                }),
+                Err(quotes::QuoteError::InvalidPayload(msg)) => Ok(IpcResponse {
+                    status: 400,
+                    message: msg,
+                    data: None,
+                }),
+                Err(quotes::QuoteError::Db(e)) => Ok(IpcResponse {
+                    status: 500,
+                    message: format!("Internal Error: {}", e),
+                    data: None,
+                }),
+            }
+        }
+        "fetch_quote" => {
+            let offer_ref = match payload
+                .as_ref()
+                .and_then(|p| p.get("offer_ref"))
+                .and_then(|v| v.as_str())
+            {
+                Some(r) => r.to_string(),
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Missing 'offer_ref' for fetch_quote".into(),
+                        data: None,
+                    });
+                }
+            };
+            let rev_suffix = payload
+                .as_ref()
+                .and_then(|p| p.get("rev_suffix"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let conn = db.0.lock().unwrap();
+            match quotes::fetch_quote(&conn, &tenant_id, &offer_ref, rev_suffix.as_deref()) {
+                Ok(Some(record)) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Quote found".into(),
+                    data: Some(serde_json::to_value(record).unwrap_or(serde_json::Value::Null)),
+                }),
+                Ok(None) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Quote not found".into(),
+                    data: Some(serde_json::json!({ "error": "Quote not found" })),
+                }),
+                Err(quotes::QuoteError::InvalidPayload(msg)) => Ok(IpcResponse {
+                    status: 400,
+                    message: msg,
+                    data: None,
+                }),
+                Err(quotes::QuoteError::Db(e)) => Ok(IpcResponse {
+                    status: 500,
+                    message: format!("Internal Error: {}", e),
+                    data: None,
+                }),
+            }
+        }
+        _ => Ok(IpcResponse {
+            status: 200,
+            message: format!("Command '{}' dispatched successfully", command_name),
+            data: payload,
+        }),
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
