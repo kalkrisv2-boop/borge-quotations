@@ -580,6 +580,40 @@ mod tests {
     }
 
     #[test]
+    fn item_order_is_1_indexed_not_0_indexed() {
+        let conn = test_conn();
+        let mut quote = sample_quote("QN-EH/999/2026", "Rev.01");
+        quote.line_items.push(QuoteItemInput {
+            item_description: "Generator, 100kVA".to_string(),
+            make_model: Some("Cummins".to_string()),
+            quantity: 1,
+            unit_rate: 500.0,
+            rate_basis: "Monthly".to_string(),
+            line_total: 500.0,
+            equipment_spec: None,
+        });
+        quote.line_items.push(QuoteItemInput {
+            item_description: "Compressor".to_string(),
+            make_model: Some("Atlas Copco".to_string()),
+            quantity: 1,
+            unit_rate: 300.0,
+            rate_basis: "Monthly".to_string(),
+            line_total: 300.0,
+            equipment_spec: None,
+        });
+
+        save_quote(&conn, "tenant-1", "user-1", &quote).expect("save should succeed");
+        let fetched = fetch_quote(&conn, "tenant-1", "QN-EH/999/2026", None)
+            .expect("fetch should succeed")
+            .expect("quote should exist");
+
+        assert_eq!(fetched.line_items.len(), 3);
+        assert_eq!(fetched.line_items[0].item_order, 1, "first item must be item_order 1, not 0");
+        assert_eq!(fetched.line_items[1].item_order, 2);
+        assert_eq!(fetched.line_items[2].item_order, 3);
+    }
+
+    #[test]
     fn saving_same_offer_ref_and_rev_suffix_updates_in_place() {
         let conn = test_conn();
         let mut quote = sample_quote("QN-EH/300/2026", "Rev.01");
