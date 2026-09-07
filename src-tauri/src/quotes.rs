@@ -346,7 +346,7 @@ pub fn save_quote(
                 generate_id(),
                 tenant_id,
                 quote_id,
-                idx as i64,
+                (idx as i64) + 1,
                 item.item_description,
                 item.make_model,
                 item.quantity,
