@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Rust / Tauri Target Build Artifacts
+target/
+src-tauri/target/
+src-tauri/gen/
+
+# Web Build Target Outputs
+dist/
+build/
+
+# Local Database Files (SQLite, DB dumps)
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Environment & Secret Files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# System & IDE Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp

@@ -1,0 +1,322 @@
+/* src/components/AssetPicker.module.css */
+/* Styling for the AssetPicker component */
+
+.assetPickerContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    position: relative;
+    width: 100%;
+}
+
+.label {
+    font-weight: 600;
+    font-size: 14px;
+    color: #2c3e50;
+    margin-bottom: 4px;
+}
+
+.searchRow {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+}
+
+.searchTypeSelect {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border: 1px solid #d1d8dd;
+    border-radius: 4px;
+    font-size: 14px;
+    background-color: #ffffff;
+    color: #2c3e50;
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+}
+
+.searchTypeSelect:hover {
+    border-color: #0B5DA7;
+}
+
+.searchTypeSelect:focus {
+    outline: none;
+    border-color: #0B5DA7;
+    box-shadow: 0 0 0 2px rgba(11, 93, 167, 0.1);
+}
+
+.searchInput {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #d1d8dd;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #2c3e50;
+    transition: border-color 0.2s ease;
+}
+
+.searchInput::placeholder {
+    color: #7f8fa3;
+}
+
+.searchInput:focus {
+    outline: none;
+    border-color: #0B5DA7;
+    box-shadow: 0 0 0 2px rgba(11, 93, 167, 0.1);
+}
+
+.searchInput:disabled {
+    background-color: #f4f6f8;
+    color: #aab1b9;
+    cursor: not-allowed;
+}
+
+.errorMessage {
+    padding: 8px 12px;
+    background-color: #fde3e8;
+    border-left: 3px solid #C0263E;
+    color: #c5020b;
+    font-size: 13px;
+    border-radius: 3px;
+}
+
+.dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 4px;
+    background-color: #ffffff;
+    border: 1px solid #d1d8dd;
+    border-radius: 4px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+    max-height: 360px;
+    overflow-y: auto;
+    z-index: 1000;
+}
+
+.loadingMessage,
+.emptyMessage {
+    padding: 16px 12px;
+    text-align: center;
+    color: #7f8fa3;
+    font-size: 13px;
+}
+
+.assetList {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.assetItem {
+    border-bottom: 1px solid #f0f3f6;
+}
+
+.assetItem:last-child {
+    border-bottom: none;
+}
+
+.assetButton {
+    width: 100%;
+    padding: 12px;
+    background: none;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    font-family: inherit;
+}
+
+.assetButton:hover {
+    background-color: #f9fafb;
+}
+
+.assetButton:active {
+    background-color: #f4f6f8;
+}
+
+.assetHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    gap: 8px;
+}
+
+.assetName {
+    font-weight: 600;
+    font-size: 14px;
+    color: #2c3e50;
+    flex: 1;
+}
+
+.assetCode {
+    font-size: 12px;
+    color: #7f8fa3;
+    background-color: #f4f6f8;
+    padding: 2px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+.assetDetails {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 6px;
+}
+
+.makeModel {
+    font-size: 13px;
+    color: #5a6b75;
+}
+
+.specs {
+    font-size: 12px;
+    color: #7f8fa3;
+    font-style: italic;
+}
+
+.rateInfo {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+}
+
+.status {
+    display: inline-block;
+    padding: 2px 8px;
+    background-color: #e8f4f8;
+    color: #0B5DA7;
+    border-radius: 3px;
+    font-weight: 500;
+}
+
+.defaultRate {
+    color: #C0263E;
+    font-weight: 600;
+}
+
+.dropdownBackdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 999;
+}
+
+.selectedAssetSummary {
+    padding: 12px;
+    background-color: #f9fafb;
+    border: 1px solid #e0e3e8;
+    border-radius: 4px;
+    margin-top: 8px;
+}
+
+.selectedAssetSummary h4 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    font-weight: 700;
+    color: #2c3e50;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.summaryRow {
+    display: flex;
+    margin-bottom: 8px;
+    font-size: 13px;
+    gap: 8px;
+}
+
+.summaryRow:last-child {
+    margin-bottom: 0;
+}
+
+.summaryRow strong {
+    color: #2c3e50;
+}
+
+.summaryRow span {
+    color: #5a6b75;
+}
+
+.code {
+    background-color: #f4f6f8;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+}
+
+.specsList {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.specItem {
+    font-size: 12px;
+    color: #5a6b75;
+    padding: 4px 8px;
+    background-color: #ffffff;
+    border-radius: 2px;
+    border-left: 2px solid #E2B808;
+}
+
+.specItem strong {
+    color: #2c3e50;
+}
+
+.ratesList {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.ratesList span {
+    font-size: 12px;
+    color: #2c3e50;
+    font-weight: 500;
+}
+
+.ratesList span::before {
+    content: '• ';
+    color: #E2B808;
+    margin-right: 4px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+    .searchRow {
+        flex-direction: column;
+    }
+
+    .searchTypeSelect,
+    .searchInput {
+        width: 100%;
+    }
+
+    .assetHeader {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .assetCode {
+        align-self: flex-start;
+    }
+
+    .rateInfo {
+        flex-direction: column;
+        gap: 4px;
+        align-items: flex-start;
+    }
+
+    .dropdown {
+        max-height: 280px;
+    }
+}

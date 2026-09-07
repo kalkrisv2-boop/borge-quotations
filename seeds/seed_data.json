@@ -1,0 +1,42 @@
+{
+  "_note": "This file is now purely illustrative. It used to contain the real Borge/Servepower tenant, a real admin login (email + working PBKDF2 password hash), and a real client quote, all committed directly in source. Now that this repo is public, those real values have been moved to a local .env file (see .env.example for the full variable list) which src-tauri/src/seed.rs reads at runtime via `dotenvy`. This JSON file is no longer read by any code -- it exists only to show the shape of what gets seeded. Populate .env with real values if you want a login-capable local instance; without it, the app seeds only a placeholder tenant and no user at all (see seed.rs's safe-by-default behavior).",
+
+  "tenant": {
+    "id": "t-example-tenant-001",
+    "name": "Example Equipment Rental LLC",
+    "company_name_ar": "مثال لتأجير المعدات",
+    "company_tagline_ar": "مثال - ليس بيانات حقيقية",
+    "address_line1": "P.O. Box: 00000",
+    "city": "Example City",
+    "country": "United Arab Emirates",
+    "phone_1": "+971 50 0000000",
+    "phone_2": "+971 56 0000000",
+    "email": "info@example.com",
+    "website": "www.example.com",
+    "vat_trn": "000000000000000"
+  },
+  "user": {
+    "id": "u-example-admin-01",
+    "tenant_id": "t-example-tenant-001",
+    "email": "admin@example.com",
+    "password_hash": "SET_VIA_.env_SEED_USER_PASSWORD_HASH -- see .env.example, not stored here",
+    "full_name": "Example Admin",
+    "phone": "+971 50 0000000",
+    "role": "admin",
+    "is_active": 1
+  },
+  "entitlements": [
+    { "module_key": "quotes_core", "is_enabled": 1 },
+    { "module_key": "inventory_specs", "is_enabled": 1 },
+    { "module_key": "rate_matrix", "is_enabled": 1 },
+    { "module_key": "compliance_terms", "is_enabled": 1 },
+    { "module_key": "revision_lpo", "is_enabled": 1 }
+  ],
+  "quote": {
+    "id": "q-sample-001",
+    "offer_ref": "QN-SAMPLE/001/2026",
+    "rev_suffix": "Rev.01",
+    "customer_name": "Sample Customer LLC",
+    "_full_sample_quote_note": "The real 7-line-item sample (SF6 gas test equipment, real AED figures) has been reduced to a single generic placeholder line item here. See src-tauri/src/seed.rs's seed_dev_data() for the actual seeded content, gated behind SEED_SAMPLE_QUOTE=1 in .env."
+  }
+}

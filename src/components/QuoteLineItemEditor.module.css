@@ -1,0 +1,139 @@
+/* src/components/QuoteLineItemEditor.module.css
+   AUDIT NOTE: this file did not exist anywhere in this project's delivery
+   history — QuoteLineItemEditor.example.tsx has imported it since Phase 2.2
+   but nothing ever provided it. Minimal, functional styling only; not a
+   final visual design pass. Kept loosely consistent with AssetPicker's
+   existing palette (navy #0B5DA7, red #C0263E) so the two don't visually
+   clash when rendered together. */
+
+.editorContainer {
+    max-width: 640px;
+    border: 1px solid #e0e3e8;
+    border-radius: 6px;
+    padding: 16px;
+    background-color: #ffffff;
+}
+
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.title {
+    margin: 0 0 4px 0;
+    font-size: 16px;
+    font-weight: 700;
+    color: #2c3e50;
+}
+
+.section {
+    border-bottom: 1px solid #f0f3f6;
+    padding-bottom: 14px;
+}
+
+.formGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.formGroup label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.formGroup input,
+.formGroup select {
+    padding: 8px 10px;
+    border: 1px solid #d1d8dd;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #2c3e50;
+}
+
+.formGroup input:focus,
+.formGroup select:focus {
+    outline: none;
+    border-color: #0B5DA7;
+    box-shadow: 0 0 0 2px rgba(11, 93, 167, 0.1);
+}
+
+.formRow {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.formRow .formGroup {
+    flex: 1;
+    min-width: 120px;
+}
+
+.specsDisplay {
+    padding: 8px 10px;
+    background-color: #f4f6f8;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #5a6b75;
+}
+
+.lineTotal {
+    padding: 8px 10px;
+    font-size: 16px;
+    font-weight: 700;
+    color: #C0263E;
+}
+
+.readOnlyField {
+    padding: 8px 10px;
+    background-color: #f4f6f8;
+    border: 1px solid #e0e3e8;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #5a6b75;
+    min-height: 18px;
+}
+
+.errorText {
+    padding: 6px 0 0 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #C0263E;
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+.buttonSave {
+    padding: 9px 18px;
+    background-color: #0B5DA7;
+    color: #ffffff;
+    border: none;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.buttonSave:hover {
+    background-color: #094a86;
+}
+
+.buttonCancel {
+    padding: 9px 18px;
+    background-color: #ffffff;
+    color: #2c3e50;
+    border: 1px solid #d1d8dd;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.buttonCancel:hover {
+    background-color: #f4f6f8;
+}

@@ -1,0 +1,483 @@
+/* templates/pdf_styles.css
+   Phase 1.3–3.2: Paged Media stylesheet for equipment quotation PDF
+   
+   Features:
+   - Multi-page container with page breaks
+   - Arabic company-name header line (Phase 1.3)
+   - Dynamic line-item table with break-inside: avoid
+   - VAT calculation display
+   - Phase 3.2: Rate Basis Legend block styling
+   - No string-set/string() (no browser support); literal-string content only
+*/
+
+/* ============================================================
+   PAGING & LAYOUT
+   ============================================================ */
+
+@page {
+    size: A4;
+    margin: 15mm 15mm 20mm 15mm;
+    
+    /* First page: no header/footer (suppressed via CSS) */
+    @first {
+        @top-left {
+            content: none;
+        }
+        @top-center {
+            content: none;
+        }
+        @bottom-center {
+            content: none;
+        }
+    }
+
+    /* Continuation pages: footer with page number */
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-size: 10px;
+        color: #666;
+    }
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: Arial, sans-serif;
+    font-size: 11px;
+    color: #2c3e50;
+    background-color: #ffffff;
+}
+
+.document-body {
+    /* FIXED: previously two hardcoded .page divs with
+       page-break-after: always. Content now flows naturally across
+       as many physical pages as it actually needs; the
+       page-break-inside: avoid rules below (on .line-item-row,
+       .terms-section, .rate-basis-legend-block, .signature-block)
+       keep individual blocks from splitting mid-block without
+       forcing artificial page boundaries elsewhere. */
+    padding: 0;
+    margin: 0;
+}
+
+/* ============================================================
+   HEADER & METADATA
+   ============================================================ */
+
+.header-block {
+    margin-bottom: 16px;
+    text-align: center;
+    border-bottom: 2px solid #0B5DA7;
+    padding-bottom: 12px;
+}
+
+.company-header {
+    margin-bottom: 8px;
+}
+
+.company-logo {
+    display: block;
+    height: 40px; /* source file is 585x65; scaled by height, width auto-follows aspect ratio */
+    width: auto;
+    margin: 0 auto 6px auto;
+}
+
+.company-name-en {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin: 0 0 4px 0;
+}
+
+.company-tagline-en {
+    font-size: 11px;
+    color: #666;
+    margin: 0;
+}
+
+/* Phase 1.3: Arabic company-name line in header */
+.company-header-ar {
+    margin: 8px 0 0 0;
+    padding-top: 6px;
+    border-top: 1px solid #e0e3e8;
+    font-size: 12px;
+    font-weight: 600;
+    color: #0B5DA7;
+}
+
+.company-name-ar {
+    margin: 0;
+    letter-spacing: 0.5px;
+}
+
+.quotation-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin: 6px 0 0 0;
+    letter-spacing: 2px;
+}
+
+/* ====== Quote Metadata Table ====== */
+
+.quote-metadata {
+    margin: 12px 0 16px 0;
+    border: 1px solid #d1d8dd;
+    border-collapse: collapse;
+}
+
+.metadata-row {
+    display: flex;
+    border-bottom: 1px solid #e0e3e8;
+}
+
+.metadata-row:last-child {
+    border-bottom: none;
+}
+
+.metadata-cell {
+    flex: 1;
+    padding: 8px 10px;
+    border-right: 1px solid #e0e3e8;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.metadata-cell:last-child {
+    border-right: none;
+}
+
+.metadata-label {
+    font-weight: 600;
+    color: #2c3e50;
+    margin-right: 12px;
+}
+
+.metadata-value {
+    color: #5a6b75;
+    text-align: right;
+}
+
+/* ====== Subject Block ====== */
+
+.subject-block {
+    margin: 12px 0;
+    padding: 8px 12px;
+    background-color: #f4f6f8;
+    border-left: 3px solid #0B5DA7;
+}
+
+.subject-text {
+    margin: 0;
+    font-size: 11px;
+    color: #2c3e50;
+    line-height: 1.5;
+}
+
+/* ============================================================
+   LINE ITEMS TABLE
+   ============================================================ */
+
+.line-items-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+.line-items-table thead {
+    background-color: #0B5DA7;
+    color: #ffffff;
+}
+
+.line-items-table th {
+    padding: 10px;
+    text-align: left;
+    font-weight: 700;
+    font-size: 11px;
+    border: 1px solid #0B5DA7;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+.line-items-table td {
+    padding: 8px 10px;
+    border: 1px solid #d1d8dd;
+    vertical-align: top;
+}
+
+.line-item-row {
+    break-inside: avoid;
+}
+
+.line-item-row:nth-child(odd) {
+    background-color: #f9f9f9;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+/* Table Column Widths */
+.col-no {
+    width: 5%;
+    text-align: center;
+}
+
+.col-description {
+    width: 35%;
+}
+
+.col-make-model {
+    width: 20%;
+}
+
+.col-qty {
+    width: 8%;
+    text-align: center;
+}
+
+.col-rate {
+    width: 15%;
+    text-align: right;
+}
+
+/* Item Description & Specs */
+.item-description-main {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.item-specs {
+    font-size: 10px;
+    color: #666;
+    margin-top: 4px;
+    font-style: italic;
+}
+
+/* ============================================================
+   TOTALS SECTION
+   ============================================================ */
+
+.totals-section {
+    margin: 16px 0;
+    padding: 12px;
+    border: 1px solid #d1d8dd;
+    background-color: #f4f6f8;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+.totals-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #e0e3e8;
+    font-size: 11px;
+}
+
+.totals-row:last-child {
+    border-bottom: none;
+}
+
+.totals-label {
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.totals-value {
+    text-align: right;
+    color: #5a6b75;
+    font-family: 'Courier New', monospace;
+}
+
+.totals-grand-total {
+    background-color: #ffffff;
+    font-size: 12px;
+    font-weight: 700;
+    color: #C0263E;
+    padding: 8px 0;
+    margin-top: 4px;
+    border-top: 2px solid #C0263E;
+    border-bottom: none;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+.totals-grand-total .totals-value {
+    color: #C0263E;
+}
+
+/* ============================================================
+   TERMS & CONDITIONS
+   ============================================================ */
+
+.terms-section {
+    margin: 16px 0;
+    page-break-inside: avoid;
+}
+
+.terms-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin: 0 0 8px 0;
+    border-bottom: 1px solid #e0e3e8;
+    padding-bottom: 4px;
+}
+
+.terms-list {
+    margin: 8px 0;
+    padding-left: 20px;
+    font-size: 10px;
+    line-height: 1.5;
+    color: #5a6b75;
+}
+
+.terms-list li {
+    margin-bottom: 6px;
+}
+
+/* ============================================================
+   PHASE 3.2: RATE BASIS LEGEND
+   ============================================================ */
+
+.rate-basis-legend-block {
+    margin: 20px 0 16px 0;
+    padding: 12px;
+    border: 1px solid #d1d8dd;
+    background-color: #f9f9f9;
+    page-break-inside: avoid;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+
+.legend-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0B5DA7;
+    margin: 0 0 8px 0;
+    border-bottom: 1px solid #e0e3e8;
+    padding-bottom: 4px;
+}
+
+.legend-list {
+    margin: 8px 0;
+    padding-left: 20px;
+    font-size: 10px;
+    line-height: 1.6;
+    color: #2c3e50;
+}
+
+.legend-list li {
+    margin-bottom: 4px;
+    break-inside: avoid;
+}
+
+.legend-list strong {
+    color: #0B5DA7;
+}
+
+.legend-note {
+    margin: 8px 0 0 0;
+    font-size: 9px;
+    color: #999;
+    font-style: italic;
+    line-height: 1.4;
+}
+
+/* ============================================================
+   SIGNATURE BLOCK
+   ============================================================ */
+
+.signature-block {
+    margin: 20px 0;
+    padding: 12px;
+    text-align: center;
+    border-top: 1px solid #e0e3e8;
+    page-break-inside: avoid;
+}
+
+.signature-authority {
+    font-weight: 600;
+    margin: 0 0 6px 0;
+    font-size: 11px;
+}
+
+.signature-name {
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    font-size: 12px;
+    color: #0B5DA7;
+}
+
+.signature-note {
+    font-size: 10px;
+    color: #666;
+    margin: 0;
+    font-style: italic;
+}
+
+/* ============================================================
+   FOOTER
+   ============================================================ */
+
+.footer-block {
+    margin-top: 16px;
+    padding-top: 8px;
+    border-top: 1px solid #d1d8dd;
+    text-align: center;
+}
+
+.footer-text {
+    margin: 0;
+    font-size: 10px;
+    color: #999;
+    font-style: italic;
+}
+
+.page-number {
+    /* Placeholder for dynamic page numbering */
+}
+
+/* ============================================================
+   PAGE BREAKS & ORPHAN/WIDOW CONTROL
+   ============================================================ */
+
+table {
+    page-break-inside: avoid;
+}
+
+/* Ensure no section starts with <2 lines of content on same page */
+.page-first-header,
+.page-first-metadata,
+.page-first-content {
+    page-break-inside: avoid;
+}
+
+/* Suppress continuation page headers */
+@page:not(:first) {
+    @top-left {
+        content: none;
+    }
+    @top-center {
+        content: none;
+    }
+}
+
+/* Print-specific optimizations */
+@media print {
+    body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    a {
+        text-decoration: none;
+        color: inherit;
+    }
+
+    .no-print {
+        display: none;
+    }
+}

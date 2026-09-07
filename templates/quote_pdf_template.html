@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Equipment Quotation</title>
+    <link rel="stylesheet" href="pdf_styles.css" />
+</head>
+<body>
+    <!-- ============================================================
+         QUOTATION DOCUMENT — Paged Media Format
+         Phase 1.3–3.2: HTML/CSS container with English body +
+         Arabic company-name header line, Paged Media pagination,
+         dynamic line items, VAT calculation, and Phase 3.2 Rate
+         Basis Legend block at document end.
+
+         FIXED (page-overflow audit): this used to be two hardcoded
+         <div class="page"> blocks with page-break-after: always,
+         sized around the 7-item Servepower sample. With more line
+         items than that sample (verified with an 11-item test quote),
+         the first "page" div's own content already overflowed onto a
+         second physical page, and the forced break then pushed Terms
+         & Conditions onto a page mostly by itself. Page count is a
+         function of actual content, not a fixed number of divs, so
+         this is now a single flowing container: content paginates
+         naturally, and the page-break-inside: avoid rules already on
+         .line-item-row, .terms-section, .rate-basis-legend-block, and
+         .signature-block (see pdf_styles.css) stop any of those
+         *individual* blocks from splitting mid-block, without forcing
+         extra blank space anywhere else. ============================================================ -->
+
+    <div class="document-body">
+        <!-- ====== Header ====== -->
+        <div class="header-block page-first-header">
+            <div class="header-container">
+                <!-- English Company Letterhead -->
+                <div class="company-header">
+                    <img src="borge-logo.jpg" alt="Borge Equipment Rental" class="company-logo" />
+                    <div class="company-name-en">BORGE EQUIPMENT RENTAL</div>
+                    <div class="company-tagline-en">Abu Dhabi, UAE</div>
+                </div>
+
+                <!-- Arabic Company Name Line (Phase 1.3) -->
+                <div class="company-header-ar" lang="ar" dir="rtl">
+                    <div class="company-name-ar">معدات بورج للإيجار</div>
+                </div>
+
+                <!-- Quotation Title -->
+                <h1 class="quotation-title">QUOTATION</h1>
+            </div>
+        </div>
+
+        <!-- ====== Quote Metadata ====== -->
+        <div class="quote-metadata page-first-metadata">
+            <div class="metadata-row">
+                <div class="metadata-cell">
+                    <span class="metadata-label">Customer</span>
+                    <span class="metadata-value">{{ customer_name }}</span>
+                </div>
+                <div class="metadata-cell">
+                    <span class="metadata-label">Offer Ref</span>
+                    <span class="metadata-value">{{ offer_reference }}</span>
+                </div>
+            </div>
+            <div class="metadata-row">
+                <div class="metadata-cell">
+                    <span class="metadata-label">PO Box</span>
+                    <span class="metadata-value">{{ po_box }}</span>
+                </div>
+                <div class="metadata-cell">
+                    <span class="metadata-label">Date</span>
+                    <span class="metadata-value">{{ quote_date }}</span>
+                </div>
+            </div>
+            <div class="metadata-row">
+                <div class="metadata-cell">
+                    <span class="metadata-label">Location</span>
+                    <span class="metadata-value">{{ location }}</span>
+                </div>
+            </div>
+            <div class="metadata-row">
+                <div class="metadata-cell">
+                    <span class="metadata-label">Contact Person</span>
+                    <span class="metadata-value">{{ contact_person }}</span>
+                </div>
+                <div class="metadata-cell">
+                    <span class="metadata-label">Sales Person</span>
+                    <span class="metadata-value">{{ sales_person }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ====== Subject Line ====== -->
+        <div class="subject-block">
+            <p class="subject-text">
+                Further to your subject request please see below our offer for the
+                <strong>{{ equipment_category }}</strong> hiring charges
+            </p>
+        </div>
+
+        <!-- ====== Line Items Table ====== -->
+        <table class="line-items-table">
+            <thead>
+                <tr>
+                    <th class="col-no">No.</th>
+                    <th class="col-description">Item Description</th>
+                    <th class="col-make-model">Make/Model</th>
+                    <th class="col-qty">Qty</th>
+                    <th class="col-rate">{{ rate_basis }} Rate (AED)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Template Loop: Inject line items here -->
+                {% for item in line_items %}
+                <tr class="line-item-row">
+                    <td class="col-no">{{ item.item_order }}</td>
+                    <td class="col-description">
+                        <div class="item-description-main">{{ item.item_description }}</div>
+                        {% if item.equipment_spec %}
+                        <div class="item-specs">{{ item.equipment_spec }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="col-make-model">{{ item.make_model }}</td>
+                    <td class="col-qty">{{ item.quantity }}</td>
+                    <td class="col-rate">{{ item.unit_rate | format_currency }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- ====== Totals Section ====== -->
+        <div class="totals-section">
+            <div class="totals-row">
+                <span class="totals-label">Subtotal (AED)</span>
+                <span class="totals-value">{{ subtotal | format_currency }}</span>
+            </div>
+            <div class="totals-row">
+                <span class="totals-label">VAT (5%, AED)</span>
+                <span class="totals-value">{{ vat_amount | format_currency }}</span>
+            </div>
+            <div class="totals-row totals-grand-total">
+                <span class="totals-label">Grand Total (AED)</span>
+                <span class="totals-value">{{ grand_total | format_currency }}</span>
+            </div>
+        </div>
+
+        <!-- ====== Terms & Conditions ====== -->
+        <div class="terms-section">
+            <h3 class="terms-title">Terms & Conditions</h3>
+            <ol class="terms-list">
+                <li>{{ terms_line_1 }}</li>
+                <li>{{ terms_line_2 }}</li>
+                <li>{{ terms_line_3 }}</li>
+                <li>{{ terms_line_4 }}</li>
+                <li>{{ terms_line_5 }}</li>
+                <li>{{ terms_line_6 }}</li>
+                <li>{{ terms_line_7 }}</li>
+                <li>{{ terms_line_8 }}</li>
+                <li>{{ terms_line_9 }}</li>
+            </ol>
+        </div>
+
+        <!-- ====== Phase 3.2: Rate Basis Legend Block ======
+             FIXED (earlier session): this block previously had its own
+             hardcoded <h3>/legend-note copy AND injected
+             rate_basis_legend_html, which already contains its own
+             title/list/note (see RateBasisLegend.tsx). That was exactly
+             the double-copy drift risk the component's own doc comment
+             warns about. The template injects the component's HTML
+             output only. -->
+        {{ rate_basis_legend_html | safe }}
+
+        <!-- ====== Signature Block ====== -->
+        <div class="signature-block">
+            <p class="signature-authority">
+                For and on behalf of Borge Equipment Rental
+            </p>
+            <p class="signature-name">{{ authorized_signatory }}</p>
+            <p class="signature-note">
+                <em>This is a system generated document and need no Signature</em>
+            </p>
+        </div>
+
+        <!-- ====== Footer ======
+             FIXED: previously duplicated — once after Terms (as part of
+             the old "page 1" div) and again after the signature block
+             (as part of the old "page 2" div), so a 2-physical-page
+             render showed the "system generated" note twice. Now there
+             is exactly one footer at the true end of the document. The
+             literal "Page <span class="page-number"></span>" text was
+             also removed: the span was never populated by any code
+             (grep confirms nothing sets .page-number), so it rendered
+             as a dangling, empty "Page" label directly above the real,
+             working page counter already supplied by
+             @page { @bottom-center { content: "Page " counter(page) "
+             of " counter(pages); } } in pdf_styles.css. -->
+        <div class="footer-block">
+            <p class="footer-text">
+                <em>This is a system generated document and need no Signature</em>
+            </p>
+        </div>
+    </div>
+</body>
+</html>

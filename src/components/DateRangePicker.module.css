@@ -1,0 +1,80 @@
+/* src/components/DateRangePicker.module.css
+   Phase 3.2 — Date-range picker component styling
+   Consistent with QuoteLineItemEditor's existing palette (navy #0B5DA7, red #C0263E) */
+
+.dateRangeContainer {
+    padding: 12px 0;
+    border-bottom: 1px solid #f0f3f6;
+}
+
+.title {
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.formRow {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.formRow .formGroup {
+    flex: 1;
+    min-width: 140px;
+}
+
+.formGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.formGroup label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.formGroup input[type="date"] {
+    padding: 8px 10px;
+    border: 1px solid #d1d8dd;
+    border-radius: 4px;
+    font-size: 14px;
+    color: #2c3e50;
+    background-color: #ffffff;
+}
+
+.formGroup input[type="date"]:focus {
+    outline: none;
+    border-color: #0B5DA7;
+    box-shadow: 0 0 0 2px rgba(11, 93, 167, 0.1);
+}
+
+.readOnlyDisplay {
+    padding: 8px 10px;
+    background-color: #f4f6f8;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #5a6b75;
+    border: 1px solid #d1d8dd;
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+}
+
+.errorText {
+    font-size: 12px;
+    color: #C0263E;
+    font-weight: 600;
+    margin-top: 6px;
+}
+
+.helpText {
+    font-size: 12px;
+    color: #0B5DA7;
+    font-weight: 500;
+    margin-top: 6px;
+}
