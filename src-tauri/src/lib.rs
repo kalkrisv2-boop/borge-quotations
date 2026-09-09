@@ -8,6 +8,7 @@ mod pdf_render;
 mod quotes;
 mod rate_matrix;
 mod seed;
+mod compliance;
 
 use std::io::Write as _;
 use std::process::Command;
@@ -66,6 +67,19 @@ fn required_module_key(command_name: &str) -> Option<&'static str> {
         // export is a quotes_core capability, not a separate module key in
         // CANONICAL_MODULE_KEYS").
         "generate_quote_pdf" => Some("quotes_core"),
+        // Phase 5.1: revision history/branching is a quotes_core capability, same
+        // reasoning as generate_quote_pdf above -- not a separate module key.
+        "fetch_quote_revisions" | "branch_new_revision" => Some("quotes_core"),
+        // Phase 4.2: compliance_terms was already reserved as a module key in
+        // 001_core_schema.sql's comment since Phase R.0 — this is the first phase that
+        // actually implements commands behind it.
+        "list_compliance_terms"
+        | "save_compliance_term"
+        | "deactivate_compliance_term"
+        | "attach_terms_to_quote"
+        | "list_tax_rules"
+        | "save_tax_rule"
+        | "deactivate_tax_rule" => Some("compliance_terms"),
         _ => None,
     }
 }
@@ -380,6 +394,13 @@ async fn handle_guarded_ipc(
                     message: msg,
                     data: None,
                 }),
+                // Phase 5.1: distinct 409 (Conflict), not 400 -- the request itself was
+                // well-formed, it's the target row's current state that forbids it.
+                Err(quotes::QuoteError::Locked(msg)) => Ok(IpcResponse {
+                    status: 409,
+                    message: msg,
+                    data: None,
+                }),
                 Err(quotes::QuoteError::Db(e)) => Ok(IpcResponse {
                     status: 500,
                     message: format!("Internal Error: {}", e),
@@ -422,6 +443,16 @@ async fn handle_guarded_ipc(
                 }),
                 Err(quotes::QuoteError::InvalidPayload(msg)) => Ok(IpcResponse {
                     status: 400,
+                    message: msg,
+                    data: None,
+                }),
+                // fetch_quote is read-only and can never actually produce this variant
+                // (only save_quote/branch_new_revision write status), but the match
+                // must stay exhaustive over QuoteError -- this exists so a future
+                // variant addition breaks compilation here too, not just where it's
+                // reachable today.
+                Err(quotes::QuoteError::Locked(msg)) => Ok(IpcResponse {
+                    status: 409,
                     message: msg,
                     data: None,
                 }),
@@ -557,6 +588,15 @@ async fn handle_guarded_ipc(
                             data: None,
                         });
                     }
+                    Err(quotes::QuoteError::Locked(msg)) => {
+                        // Unreachable via fetch_quote (read-only), kept for exhaustiveness
+                        // -- see the identical comment at the fetch_quote dispatch arm.
+                        return Ok(IpcResponse {
+                            status: 409,
+                            message: msg,
+                            data: None,
+                        });
+                    }
                     Err(quotes::QuoteError::Db(e)) => {
                         return Ok(IpcResponse {
                             status: 500,
@@ -567,7 +607,7 @@ async fn handle_guarded_ipc(
                 }
             };
 
-            match generate_pdf_for_quote(&record) {
+            match generate_pdf_for_quote(&db, &tenant_id, &record) {
                 Ok(pdf_path) => Ok(IpcResponse {
                     status: 200,
                     message: "PDF generated".into(),
@@ -581,11 +621,302 @@ async fn handle_guarded_ipc(
             }
         }
 
+        // Phase 5.1: real dispatch for the revision-history commands.
+        "fetch_quote_revisions" => {
+            let quote_id = match payload.as_ref().and_then(|p| p.get("quote_id")).and_then(|v| v.as_str()) {
+                Some(id) => id.to_string(),
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Missing 'quote_id' for fetch_quote_revisions".into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            match quotes::fetch_quote_revisions(&conn, &tenant_id, &quote_id) {
+                Ok(revisions) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Quote revisions listed".into(),
+                    data: Some(serde_json::to_value(revisions).unwrap_or(serde_json::Value::Null)),
+                }),
+                Err(e) => Ok(quote_error_response(e)),
+            }
+        }
+        "branch_new_revision" => {
+            #[derive(serde::Deserialize)]
+            struct BranchRevisionRequest {
+                quote_id: String,
+                new_rev_suffix: String,
+            }
+            let req: BranchRevisionRequest = match payload
+                .as_ref()
+                .and_then(|p| serde_json::from_value(p.clone()).ok())
+            {
+                Some(r) => r,
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Invalid or missing payload for branch_new_revision \
+                                  (expected 'quote_id' and 'new_rev_suffix')"
+                            .into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            match quotes::branch_new_revision(
+                &conn,
+                &tenant_id,
+                &user_id,
+                &req.quote_id,
+                &req.new_rev_suffix,
+            ) {
+                Ok((new_quote_id, revision_id)) => Ok(IpcResponse {
+                    status: 200,
+                    message: "New revision created".into(),
+                    data: Some(serde_json::json!({
+                        "new_quote_id": new_quote_id,
+                        "revision_id": revision_id,
+                    })),
+                }),
+                Err(e) => Ok(quote_error_response(e)),
+            }
+        }
+
+        // Phase 4.2: real dispatch for the compliance_terms/tax_rules commands, reached
+        // only after the same entitlement check every other command goes through above
+        // (required_module_key already maps all of these to "compliance_terms").
+        "list_compliance_terms" => {
+            let active_only = payload
+                .as_ref()
+                .and_then(|p| p.get("active_only"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let conn = db.0.lock().unwrap();
+            match compliance::list_compliance_terms(&conn, &tenant_id, active_only) {
+                Ok(terms) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Compliance terms listed".into(),
+                    data: Some(serde_json::to_value(terms).unwrap_or(serde_json::Value::Null)),
+                }),
+                Err(e) => Ok(compliance_error_response(e)),
+            }
+        }
+        "save_compliance_term" => {
+            #[derive(serde::Deserialize)]
+            struct SaveTermRequest {
+                id: Option<String>,
+                term: compliance::ComplianceTermInput,
+            }
+            let req: SaveTermRequest = match payload
+                .as_ref()
+                .and_then(|p| serde_json::from_value(p.clone()).ok())
+            {
+                Some(r) => r,
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Invalid or missing payload for save_compliance_term \
+                                  (expected optional 'id' and a 'term' object)"
+                            .into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            let result = match &req.id {
+                Some(id) => {
+                    compliance::update_compliance_term(&conn, &tenant_id, id, &req.term)
+                        .map(|_| id.clone())
+                }
+                None => compliance::create_compliance_term(&conn, &tenant_id, &req.term),
+            };
+            match result {
+                Ok(id) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Compliance term saved".into(),
+                    data: Some(serde_json::json!({ "id": id })),
+                }),
+                Err(e) => Ok(compliance_error_response(e)),
+            }
+        }
+        "deactivate_compliance_term" => {
+            let id = match payload.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_str()) {
+                Some(id) => id.to_string(),
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Missing 'id' for deactivate_compliance_term".into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            match compliance::deactivate_compliance_term(&conn, &tenant_id, &id) {
+                Ok(()) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Compliance term deactivated".into(),
+                    data: None,
+                }),
+                Err(e) => Ok(compliance_error_response(e)),
+            }
+        }
+        "attach_terms_to_quote" => {
+            #[derive(serde::Deserialize)]
+            struct AttachTermsRequest {
+                quote_id: String,
+                #[serde(default)]
+                term_ids: Vec<String>,
+            }
+            let req: AttachTermsRequest = match payload
+                .as_ref()
+                .and_then(|p| serde_json::from_value(p.clone()).ok())
+            {
+                Some(r) => r,
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Invalid or missing payload for attach_terms_to_quote \
+                                  (expected 'quote_id' and 'term_ids')"
+                            .into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            match compliance::attach_terms_to_quote(&conn, &tenant_id, &req.quote_id, &req.term_ids) {
+                Ok(()) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Terms attached to quote".into(),
+                    data: None,
+                }),
+                Err(e) => Ok(compliance_error_response(e)),
+            }
+        }
+        "list_tax_rules" => {
+            let active_only = payload
+                .as_ref()
+                .and_then(|p| p.get("active_only"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let conn = db.0.lock().unwrap();
+            match compliance::list_tax_rules(&conn, &tenant_id, active_only) {
+                Ok(rules) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Tax rules listed".into(),
+                    data: Some(serde_json::to_value(rules).unwrap_or(serde_json::Value::Null)),
+                }),
+                Err(e) => Ok(compliance_error_response(e)),
+            }
+        }
+        "save_tax_rule" => {
+            #[derive(serde::Deserialize)]
+            struct SaveTaxRuleRequest {
+                id: Option<String>,
+                rule: compliance::TaxRuleInput,
+            }
+            let req: SaveTaxRuleRequest = match payload
+                .as_ref()
+                .and_then(|p| serde_json::from_value(p.clone()).ok())
+            {
+                Some(r) => r,
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Invalid or missing payload for save_tax_rule \
+                                  (expected optional 'id' and a 'rule' object)"
+                            .into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            let result = match &req.id {
+                Some(id) => compliance::update_tax_rule(&conn, &tenant_id, id, &req.rule).map(|_| id.clone()),
+                None => compliance::create_tax_rule(&conn, &tenant_id, &req.rule),
+            };
+            match result {
+                Ok(id) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Tax rule saved".into(),
+                    data: Some(serde_json::json!({ "id": id })),
+                }),
+                Err(e) => Ok(compliance_error_response(e)),
+            }
+        }
+        "deactivate_tax_rule" => {
+            let id = match payload.as_ref().and_then(|p| p.get("id")).and_then(|v| v.as_str()) {
+                Some(id) => id.to_string(),
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Missing 'id' for deactivate_tax_rule".into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            match compliance::deactivate_tax_rule(&conn, &tenant_id, &id) {
+                Ok(()) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Tax rule deactivated".into(),
+                    data: None,
+                }),
+                Err(e) => Ok(compliance_error_response(e)),
+            }
+        }
+
         _ => Ok(IpcResponse {
             status: 200,
             message: format!("Command '{}' dispatched successfully", command_name),
             data: payload,
         }),
+    }
+}
+
+/// Shared error->IpcResponse mapping for the Phase 5.1 revision commands, mirroring
+/// compliance_error_response's reasoning: one place, not N slightly-different copies.
+fn quote_error_response(e: quotes::QuoteError) -> IpcResponse {
+    match e {
+        quotes::QuoteError::InvalidPayload(msg) => IpcResponse {
+            status: 400,
+            message: msg,
+            data: None,
+        },
+        quotes::QuoteError::Locked(msg) => IpcResponse {
+            status: 409,
+            message: msg,
+            data: None,
+        },
+        quotes::QuoteError::Db(e) => IpcResponse {
+            status: 500,
+            message: format!("Internal Error: {}", e),
+            data: None,
+        },
+    }
+}
+
+/// Shared error->IpcResponse mapping for every compliance/tax_rules command above —
+/// kept in one place so all seven commands report InvalidPayload as 400, NotFound as
+/// 404, and Db errors as 500 identically, rather than seven slightly-different copies.
+fn compliance_error_response(e: compliance::ComplianceError) -> IpcResponse {
+    match e {
+        compliance::ComplianceError::InvalidPayload(msg) => IpcResponse {
+            status: 400,
+            message: msg,
+            data: None,
+        },
+        compliance::ComplianceError::NotFound => IpcResponse {
+            status: 404,
+            message: "Not found".into(),
+            data: None,
+        },
+        compliance::ComplianceError::Db(e) => IpcResponse {
+            status: 500,
+            message: format!("Internal Error: {}", e),
+            data: None,
+        },
     }
 }
 
@@ -623,7 +954,57 @@ async fn handle_guarded_ipc(
 /// `RateBasisLegend.tsx`'s dynamic behavior (which the frontend uses to highlight the
 /// *currently selected* tier) — it is static text sufficient to produce a correct,
 /// real PDF. Porting the dynamic highlighting behavior is unscoped work, not done here.
-fn build_pdf_context(record: &quotes::QuoteRecord) -> pdf_render::PdfContext {
+/// Phase R.5 (updated Phase 4.2) — assembles a `pdf_render::PdfContext` from a real,
+/// saved `QuoteRecord` and produces an actual PDF file on disk.
+///
+/// ## Field-mapping gap, flagged explicitly (not silently papered over)
+/// `templates/quote_pdf_template.html` / `PdfContext` expect `page_count`,
+/// `equipment_category`, and `authorized_signatory`. None of these have a matching
+/// column in the real `quotes` table (`001_core_schema.sql`) — `quotes.rs`'s own module
+/// doc already flagged that the `save_quote`/`fetch_quote` schema and
+/// `server/ipc_handlers.js`'s `generate_quote_pdf` JS contract use different,
+/// unreconciled shapes. This function makes the best available mapping and states each
+/// substitution:
+/// - `equipment_category` falls back to the stored `subject_text` (closest existing
+///   free-text field); `authorized_signatory` falls back to `salesperson_name`;
+///   `location` falls back to `customer_city`; `page_count` is hardcoded to `"1/1"`
+///   (confirmed in R.4 to be unused by the template body itself, so this is cosmetic
+///   only, not a rendering defect).
+/// **This mapping needs an explicit Architect/PM decision**: either add the missing
+/// columns to the schema (a real migration), or confirm these fallbacks are
+/// acceptable permanently. Not resolved here — flagged, per Section 2.2, not silently
+/// decided.
+///
+/// ## Phase 4.2 change: terms and VAT are now real, structured data
+/// `terms_line_1..9` (a fixed 9-field hack, R.5) is gone. `terms` is now built from
+/// `compliance::fetch_terms_for_quote` — real, tenant-scoped, selected clauses (see
+/// `compliance.rs` module doc for why "selecting" needed to be real data, not free
+/// text). If no compliance terms were ever attached to this quote (pre-Phase-4 quotes,
+/// or a quote saved without selecting any), this falls back to the single legacy
+/// `terms_conditions` string as one line — old quotes still render something sensible,
+/// they don't silently go blank.
+///
+/// `vat_amount`/`vat_label` now come from `compliance::resolve_tax_rate`, keyed off the
+/// quote's stored `tax_rule_id` (Phase 4.2, migration 004). If resolution finds nothing
+/// (no tax rule selected AND no tenant default configured), this falls back to the
+/// pre-Phase-4 behavior exactly as before: `record.vat_rate` if non-zero, else a flat
+/// 5%, with a generic "VAT (`rate`%, AED)" label instead of a named region.
+///
+/// ## rate_basis_legend_html — also flagged
+/// R.4's own doc comment states the Rust equivalent of `getRateBasisLegendHTML()` was
+/// explicitly out of that phase's scope. No Rust port of that function exists anywhere
+/// in this fileset. Rather than leave the legend block empty in a "real PDF" (which
+/// would fail R.4/R.5's own Completion Check — "dynamic legend correct"), this
+/// function inlines the same static three-line legend text visible in the reference
+/// Servepower sample PDF and in `route-map-v2.docx`. This is NOT a port of
+/// `RateBasisLegend.tsx`'s dynamic behavior (which the frontend uses to highlight the
+/// *currently selected* tier) — it is static text sufficient to produce a correct,
+/// real PDF. Porting the dynamic highlighting behavior is unscoped work, not done here.
+fn build_pdf_context(
+    conn: &rusqlite::Connection,
+    tenant_id: &str,
+    record: &quotes::QuoteRecord,
+) -> pdf_render::PdfContext {
     let line_items = record
         .line_items
         .iter()
@@ -634,30 +1015,66 @@ fn build_pdf_context(record: &quotes::QuoteRecord) -> pdf_render::PdfContext {
             make_model: item.make_model.clone().unwrap_or_default(),
             quantity: item.quantity,
             unit_rate: item.unit_rate,
+            // FIX: previously missing entirely, so the PDF table never showed the
+            // extended amount for a line (qty x rate) anywhere. Each item already
+            // carries its own rate_basis (quotes.rs's real QuoteItemRecord shape) —
+            // use that per row instead of the single quote-level rate_basis string,
+            // which is misleading once items can have different bases.
+            rate_basis: item.rate_basis.clone(),
+            line_total: item.unit_rate * item.quantity as f64,
         })
         .collect::<Vec<_>>();
 
-    // Recompute subtotal/VAT/grand total from line items rather than trusting the
-    // stored aggregate columns — matches server/ipc_handlers.js's own
-    // generate_quote_pdf handler, which recomputes rather than reads quote.subtotal.
+    // Recompute subtotal from line items rather than trusting the stored aggregate
+    // column — matches server/ipc_handlers.js's own generate_quote_pdf handler, which
+    // recomputes rather than reads quote.subtotal.
     let subtotal: f64 = record
         .line_items
         .iter()
         .map(|i| i.unit_rate * i.quantity as f64)
         .sum();
-    // `vat_rate` being exactly 0.0 is ambiguous: it could mean "explicitly VAT-exempt"
-    // or "never set" (quotes.rs defaults it to 5.0 on insert if the caller omits it, so
-    // a genuine 0 can only reach here if a caller deliberately passed 0). Treating 0 as
-    // "not set, fall back to 5%" is this function's choice, flagged here rather than
-    // silently assumed — Architect should confirm whether a deliberate 0 (VAT-exempt
-    // quote) needs to be representable, in which case this fallback is wrong and
-    // should be `record.vat_rate / 100.0` unconditionally.
-    let vat_amount = if record.vat_rate > 0.0 {
-        subtotal * (record.vat_rate / 100.0)
-    } else {
-        subtotal * 0.05
+
+    // Phase 4.2: resolve the real tax rule this quote selected (or the tenant's
+    // default, or fall back to the legacy flat-rate behavior) instead of hardcoding a
+    // "0 means fall back to 5%" assumption inline here as R.5 originally did.
+    let (vat_rate_pct, vat_label) = match compliance::resolve_tax_rate(
+        conn,
+        tenant_id,
+        record.tax_rule_id.as_deref(),
+    ) {
+        Ok(Some(rate)) => {
+            // Look up the label for whichever rule actually produced this rate, so the
+            // PDF can say e.g. "VAT (UAE Standard VAT 5%, AED)" — resolve_tax_rate
+            // intentionally returns only the rate (it may fall back tenant-default-wise
+            // internally), so the label needs its own lookup rather than assuming the
+            // caller's tax_rule_id was the one actually used.
+            let label = resolve_tax_rule_label(conn, tenant_id, record.tax_rule_id.as_deref())
+                .unwrap_or_else(|| "VAT".to_string());
+            (rate, format!("{} ({}%, AED)", label, format_rate(rate)))
+        }
+        Ok(None) | Err(_) => {
+            // Legacy fallback: same ambiguity `record.vat_rate == 0.0` always had
+            // (flagged originally in R.5) — "0 means never set" is still this
+            // function's choice here, unchanged from before Phase 4.2. Architect should
+            // confirm whether a deliberate 0% (VAT-exempt) quote needs to be
+            // representable without a tax_rules row backing it.
+            let rate = if record.vat_rate > 0.0 { record.vat_rate } else { 5.0 };
+            (rate, format!("VAT ({}%, AED)", format_rate(rate)))
+        }
     };
+    let vat_amount = subtotal * (vat_rate_pct / 100.0);
     let grand_total = subtotal + vat_amount;
+
+    // Phase 4.2: real selected compliance terms, in selection order. Falls back to the
+    // single legacy `terms_conditions` string (as one line) only when nothing was ever
+    // attached — see this function's doc comment.
+    let terms: Vec<String> = match compliance::fetch_terms_for_quote(conn, tenant_id, &record.id) {
+        Ok(rows) if !rows.is_empty() => rows.into_iter().map(|t| t.body_text).collect(),
+        _ => match &record.terms_conditions {
+            Some(text) if !text.trim().is_empty() => vec![text.clone()],
+            _ => Vec::new(),
+        },
+    };
 
     pdf_render::PdfContext {
         customer_name: record.customer_name.clone(),
@@ -677,21 +1094,58 @@ fn build_pdf_context(record: &quotes::QuoteRecord) -> pdf_render::PdfContext {
         subtotal,
         vat_amount,
         grand_total,
-        terms_line_1: record.terms_conditions.clone().unwrap_or_default(),
-        terms_line_2: String::new(),
-        terms_line_3: String::new(),
-        terms_line_4: String::new(),
-        terms_line_5: String::new(),
-        terms_line_6: String::new(),
-        terms_line_7: String::new(),
-        terms_line_8: String::new(),
-        terms_line_9: String::new(),
+        terms,
+        vat_label,
         rate_basis_legend_html: RATE_BASIS_LEGEND_HTML.to_string(),
         authorized_signatory: record
             .salesperson_name
             .clone()
             .unwrap_or_default(),
     }
+}
+
+/// Formats a percentage for display without a trailing ".0" on whole numbers (e.g. "5"
+/// not "5.00") but preserving genuine fractional rates (e.g. "5.5") — matches how a
+/// human would write a rate in a label, distinct from `format_currency`'s always-2dp
+/// convention which is for money amounts, not the rate itself.
+fn format_rate(rate: f64) -> String {
+    if (rate - rate.trunc()).abs() < f64::EPSILON {
+        format!("{}", rate as i64)
+    } else {
+        format!("{}", rate)
+    }
+}
+
+/// Looks up the region_label for whichever tax rule actually produced the rate used —
+/// mirrors `compliance::resolve_tax_rate`'s own explicit/then-default resolution order
+/// so the label always matches the rate, never a stale/mismatched one.
+fn resolve_tax_rule_label(
+    conn: &rusqlite::Connection,
+    tenant_id: &str,
+    tax_rule_id: Option<&str>,
+) -> Option<String> {
+    if let Some(id) = tax_rule_id {
+        let label: Option<String> = conn
+            .query_row(
+                "SELECT region_label FROM tax_rules WHERE id = ?1 AND tenant_id = ?2 AND is_active = 1",
+                rusqlite::params![id, tenant_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .ok()
+            .flatten();
+        if label.is_some() {
+            return label;
+        }
+    }
+    conn.query_row(
+        "SELECT region_label FROM tax_rules WHERE tenant_id = ?1 AND is_default = 1 AND is_active = 1",
+        rusqlite::params![tenant_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
 }
 
 /// Static legend text — see `build_pdf_context`'s doc comment for why this is static,
@@ -730,9 +1184,16 @@ const RATE_BASIS_LEGEND_HTML: &str = r#"<div class="rate-basis-legend-block"><h3
 /// `-u file://<templates_dir>/` argument tells WeasyPrint to treat that directory as
 /// the base URL for resolving those relative paths, since the HTML itself is piped
 /// via stdin and has no filesystem location of its own to resolve them against.
-fn generate_pdf_for_quote(record: &quotes::QuoteRecord) -> Result<String, String> {
+fn generate_pdf_for_quote(
+    db: &tauri::State<DbState>,
+    tenant_id: &str,
+    record: &quotes::QuoteRecord,
+) -> Result<String, String> {
     let template_source = include_str!("../../templates/quote_pdf_template.html");
-    let ctx = build_pdf_context(record);
+    let ctx = {
+        let conn = db.0.lock().unwrap();
+        build_pdf_context(&conn, tenant_id, record)
+    };
     let html = pdf_render::render_quote_pdf_html(template_source, &ctx)
         .map_err(|e| format!("PDF template render failed: {}", e))?;
 
@@ -899,6 +1360,38 @@ mod tests {
             required_module_key("generate_quote_pdf"),
             Some("quotes_core")
         );
+        // Phase 5.1
+        assert_eq!(
+            required_module_key("fetch_quote_revisions"),
+            Some("quotes_core")
+        );
+        assert_eq!(
+            required_module_key("branch_new_revision"),
+            Some("quotes_core")
+        );
+        // Phase 4.2
+        assert_eq!(
+            required_module_key("list_compliance_terms"),
+            Some("compliance_terms")
+        );
+        assert_eq!(
+            required_module_key("save_compliance_term"),
+            Some("compliance_terms")
+        );
+        assert_eq!(
+            required_module_key("deactivate_compliance_term"),
+            Some("compliance_terms")
+        );
+        assert_eq!(
+            required_module_key("attach_terms_to_quote"),
+            Some("compliance_terms")
+        );
+        assert_eq!(required_module_key("list_tax_rules"), Some("compliance_terms"));
+        assert_eq!(required_module_key("save_tax_rule"), Some("compliance_terms"));
+        assert_eq!(
+            required_module_key("deactivate_tax_rule"),
+            Some("compliance_terms")
+        );
         assert_eq!(required_module_key("admin_seed_entitlements"), None);
         assert_eq!(required_module_key("nonexistent_cmd"), None);
     }
@@ -915,6 +1408,15 @@ mod tests {
         "fetch_inventory_specs",
         "calculate_rate_matrix",
         "generate_quote_pdf",
+        "fetch_quote_revisions",
+        "branch_new_revision",
+        "list_compliance_terms",
+        "save_compliance_term",
+        "deactivate_compliance_term",
+        "attach_terms_to_quote",
+        "list_tax_rules",
+        "save_tax_rule",
+        "deactivate_tax_rule",
     ] {
             let key = required_module_key(cmd).unwrap();
             assert!(

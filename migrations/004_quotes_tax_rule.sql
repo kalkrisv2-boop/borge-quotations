@@ -1,0 +1,23 @@
+-- ============================================================
+-- 004_quotes_tax_rule.sql — Phase 4.2: link a saved quote to the tax_rule it used
+--
+-- quotes.vat_rate (001_core_schema.sql) remains the value actually applied at save
+-- time (a snapshot — see compliance.rs's module doc for why). This column additionally
+-- records WHICH tax_rules row (if any) that snapshot came from, so the PDF can show a
+-- real regional VAT label ("UAE Standard VAT", "Zero-Rated Export") instead of a
+-- hardcoded "VAT (5%, AED)" string — the exact gap Phase 4.2's Completion Check names
+-- ("calculated regional VAT totals").
+--
+-- FK note, flagged explicitly rather than silently accepted: this is a single-column
+-- FK to tax_rules(id), not the composite (id, tenant_id) pattern used elsewhere in this
+-- project (002_asset_directory.sql, 003_compliance_terms.sql). SQLite's ALTER TABLE ADD
+-- COLUMN cannot add a table-level composite FOREIGN KEY constraint to an existing table
+-- without a full table rebuild (unlike 003's UNIQUE INDEX workaround for the *parent*
+-- side of a composite FK, there is no equivalent trick for adding a *new* multi-column
+-- FK on the child side after the fact). Tenant ownership of tax_rule_id is therefore
+-- enforced at the application layer in quotes::save_quote (real code, not just a
+-- comment) rather than by this constraint alone. Revisit with a full table rebuild if
+-- this gap needs closing at the DB layer too.
+-- ============================================================
+
+ALTER TABLE quotes ADD COLUMN tax_rule_id VARCHAR(36) REFERENCES tax_rules(id) ON DELETE SET NULL;

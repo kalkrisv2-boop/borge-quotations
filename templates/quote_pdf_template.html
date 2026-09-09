@@ -106,7 +106,9 @@
                     <th class="col-description">Item Description</th>
                     <th class="col-make-model">Make/Model</th>
                     <th class="col-qty">Qty</th>
-                    <th class="col-rate">{{ rate_basis }} Rate (AED)</th>
+                    <th class="col-basis">Basis</th>
+                    <th class="col-rate">Rate (AED)</th>
+                    <th class="col-amount">Amount (AED)</th>
                 </tr>
             </thead>
             <tbody>
@@ -122,7 +124,15 @@
                     </td>
                     <td class="col-make-model">{{ item.make_model }}</td>
                     <td class="col-qty">{{ item.quantity }}</td>
+                    <!-- FIX: was a single quote-level "rate_basis" string baked into
+                         the column header, so a quote with mixed Daily/Weekly/Monthly
+                         items would show one basis label for the whole table regardless
+                         of what each row actually used. Shown per-row now. -->
+                    <td class="col-basis">{{ item.rate_basis }}</td>
                     <td class="col-rate">{{ item.unit_rate | format_currency }}</td>
+                    <!-- FIX: previously absent -- qty x rate was never shown anywhere,
+                         so e.g. "10 x 50.00" never resolved to a visible "500.00". -->
+                    <td class="col-amount">{{ item.line_total | format_currency }}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -135,7 +145,7 @@
                 <span class="totals-value">{{ subtotal | format_currency }}</span>
             </div>
             <div class="totals-row">
-                <span class="totals-label">VAT (5%, AED)</span>
+                <span class="totals-label">{{ vat_label }}</span>
                 <span class="totals-value">{{ vat_amount | format_currency }}</span>
             </div>
             <div class="totals-row totals-grand-total">
@@ -144,21 +154,22 @@
             </div>
         </div>
 
-        <!-- ====== Terms & Conditions ====== -->
+        <!-- ====== Terms & Conditions ======
+             FIX (Phase 4.2): previously 9 fixed "terms_line_N" slots always
+             rendered as 9 list items regardless of how much real content existed
+             (an empty quote still showed 9 empty numbered bullets). Now a real loop
+             over the selected compliance_terms — renders exactly as many list items as
+             were actually selected, none when none were. -->
+        {% if terms %}
         <div class="terms-section">
             <h3 class="terms-title">Terms & Conditions</h3>
             <ol class="terms-list">
-                <li>{{ terms_line_1 }}</li>
-                <li>{{ terms_line_2 }}</li>
-                <li>{{ terms_line_3 }}</li>
-                <li>{{ terms_line_4 }}</li>
-                <li>{{ terms_line_5 }}</li>
-                <li>{{ terms_line_6 }}</li>
-                <li>{{ terms_line_7 }}</li>
-                <li>{{ terms_line_8 }}</li>
-                <li>{{ terms_line_9 }}</li>
+                {% for term in terms %}
+                <li>{{ term }}</li>
+                {% endfor %}
             </ol>
         </div>
+        {% endif %}
 
         <!-- ====== Phase 3.2: Rate Basis Legend Block ======
              FIXED (earlier session): this block previously had its own

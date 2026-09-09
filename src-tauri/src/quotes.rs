@@ -116,6 +116,13 @@ pub struct QuoteInput {
     pub status: Option<String>,
     #[serde(default)]
     pub line_items: Vec<QuoteItemInput>,
+    /// Phase 4.2: which `tax_rules` row (if any) this quote's `vat_rate` was taken
+    /// from. `None` means "no library rule selected" (the pre-Phase-4 behavior:
+    /// `vat_rate` above is used as-is). Validated against `tenant_id` in `save_quote`
+    /// below at the application layer — see migration 004's doc comment for why this
+    /// isn't also a composite DB-level FK.
+    #[serde(default)]
+    pub tax_rule_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +154,8 @@ pub struct QuoteRecord {
     pub created_at: String,
     pub updated_at: String,
     pub line_items: Vec<QuoteItemRecord>,
+    /// Phase 4.2 — see `QuoteInput::tax_rule_id`'s doc comment.
+    pub tax_rule_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +174,11 @@ pub struct QuoteItemRecord {
 #[derive(Debug)]
 pub enum QuoteError {
     InvalidPayload(String),
+    /// Phase 5.1: the target row's `status` is in `LOCKED_STATUSES` — refuse the
+    /// modification outright rather than silently overwriting an approved quote's
+    /// history. Carries a message naming the current status and pointing the caller at
+    /// `branch_new_revision` instead of `save_quote`.
+    Locked(String),
     Db(rusqlite::Error),
 }
 
@@ -220,17 +234,25 @@ pub fn save_quote(
         ));
     }
 
-    // Phase R.5: wraps the whole save (quote row update/insert + line-item
-    // delete-then-reinsert) in one real SQL transaction — closes the item flagged
-    // (non-blocking) since R.3/Session 20: a crash or error between the DELETE and the
-    // final INSERT of line_items previously could have left a quote row with zero line
-    // items, silently. `Transaction`'s Drop rolls back automatically unless `commit()`
-    // is reached, so every early `?`-return in this function (including from
-    // `now_timestamp`, the UPDATE/INSERT calls, and the per-item INSERT loop) now rolls
-    // back cleanly instead of leaving partial state.
-    let tx = conn.unchecked_transaction()?;
-
-    let ts = now_timestamp(conn)?;
+    // Phase 4.2 / migration 004: `tax_rule_id` has no composite (id, tenant_id) DB-level
+    // FK (see migration 004's doc comment for why), so tenant ownership is checked here,
+    // in application code, before it's ever written to a row — the same "flag it, don't
+    // silently accept a weaker guarantee" approach the migration comment promises.
+    if let Some(rule_id) = &quote.tax_rule_id {
+        let owned: Option<i64> = conn
+            .query_row(
+                "SELECT 1 FROM tax_rules WHERE id = ?1 AND tenant_id = ?2",
+                params![rule_id, tenant_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if owned.is_none() {
+            return Err(QuoteError::InvalidPayload(format!(
+                "tax_rule_id '{}' does not belong to this tenant",
+                rule_id
+            )));
+        }
+    }
 
     // Look up an existing row for this exact (tenant_id, offer_ref, rev_suffix) triple
     // — this is the "same revision re-saved" case, updated in place. A different
@@ -243,6 +265,38 @@ pub fn save_quote(
             |row| row.get(0),
         )
         .optional()?;
+
+    // Phase 5.1: if a row already exists for this exact (offer_ref, rev_suffix), refuse
+    // to touch it further once its status is locked — this is the actual enforcement
+    // behind "locking prior approved versions" (module doc, Phase 5.1 section). Checked
+    // before the transaction does any writes, so a locked quote is rejected with zero
+    // side effects, not partially modified then rolled back.
+    if let Some(id) = &existing_id {
+        let current_status: String = conn.query_row(
+            "SELECT status FROM quotes WHERE id = ?1 AND tenant_id = ?2",
+            params![id, tenant_id],
+            |row| row.get(0),
+        )?;
+        if LOCKED_STATUSES.contains(&current_status.as_str()) {
+            return Err(QuoteError::Locked(format!(
+                "Quote '{}' {} is locked (status = '{}') and cannot be modified further. \
+                 Use branch_new_revision to create a new revision instead.",
+                quote.offer_ref, quote.rev_suffix, current_status
+            )));
+        }
+    }
+
+    // Phase R.5: wraps the whole save (quote row update/insert + line-item
+    // delete-then-reinsert) in one real SQL transaction — closes the item flagged
+    // (non-blocking) since R.3/Session 20: a crash or error between the DELETE and the
+    // final INSERT of line_items previously could have left a quote row with zero line
+    // items, silently. `Transaction`'s Drop rolls back automatically unless `commit()`
+    // is reached, so every early `?`-return in this function (including from
+    // `now_timestamp`, the UPDATE/INSERT calls, and the per-item INSERT loop) now rolls
+    // back cleanly instead of leaving partial state.
+    let tx = conn.unchecked_transaction()?;
+
+    let ts = now_timestamp(conn)?;
 
     let quote_id = match &existing_id {
         Some(id) => id.clone(),
@@ -258,8 +312,8 @@ pub fn save_quote(
                 salesperson_phone = ?10, subject_text = ?11, notes = ?12,
                 terms_conditions = ?13, rate_basis_text = ?14, total_amount = ?15,
                 vat_rate = ?16, vat_amount = ?17, grand_total = ?18, status = ?19,
-                updated_at = ?20
-             WHERE id = ?21 AND tenant_id = ?22",
+                updated_at = ?20, tax_rule_id = ?21
+             WHERE id = ?22 AND tenant_id = ?23",
             params![
                 quote.quote_date,
                 quote.validity_days.unwrap_or(30),
@@ -281,6 +335,7 @@ pub fn save_quote(
                 quote.grand_total.unwrap_or(0.0),
                 quote.status.clone().unwrap_or_else(|| "Draft".to_string()),
                 ts,
+                quote.tax_rule_id,
                 id,
                 tenant_id,
             ],
@@ -300,10 +355,10 @@ pub fn save_quote(
                 customer_name, customer_po_box, customer_city, contact_person,
                 customer_email, customer_ref, salesperson_name, salesperson_phone,
                 subject_text, notes, terms_conditions, rate_basis_text, total_amount,
-                vat_rate, vat_amount, grand_total, status, created_at, updated_at
+                vat_rate, vat_amount, grand_total, status, tax_rule_id, created_at, updated_at
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?25
+                ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?26
              )",
             params![
                 quote_id,
@@ -330,6 +385,7 @@ pub fn save_quote(
                 quote.vat_amount.unwrap_or(0.0),
                 quote.grand_total.unwrap_or(0.0),
                 quote.status.clone().unwrap_or_else(|| "Draft".to_string()),
+                quote.tax_rule_id,
                 ts,
             ],
         )?;
@@ -391,7 +447,7 @@ pub fn fetch_quote(
                         contact_person, customer_email, customer_ref, salesperson_name,
                         salesperson_phone, subject_text, notes, terms_conditions,
                         rate_basis_text, total_amount, vat_rate, vat_amount, grand_total,
-                        status, created_at, updated_at
+                        status, tax_rule_id, created_at, updated_at
                  FROM quotes
                  WHERE tenant_id = ?1 AND offer_ref = ?2 AND rev_suffix = ?3",
                 params![tenant_id, offer_ref, rev],
@@ -405,7 +461,7 @@ pub fn fetch_quote(
                         contact_person, customer_email, customer_ref, salesperson_name,
                         salesperson_phone, subject_text, notes, terms_conditions,
                         rate_basis_text, total_amount, vat_rate, vat_amount, grand_total,
-                        status, created_at, updated_at
+                        status, tax_rule_id, created_at, updated_at
                  FROM quotes
                  WHERE tenant_id = ?1 AND offer_ref = ?2
                  ORDER BY updated_at DESC, rowid DESC
@@ -448,6 +504,291 @@ pub fn fetch_quote(
     Ok(Some(quote))
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5.1 — Document Revision Control System
+// ---------------------------------------------------------------------------
+
+/// Statuses that lock a quote row against further `save_quote` modification. Flagged
+/// explicitly, per this project's practice, rather than silently scoped: Phase 5.1's
+/// own Completion Check only names "approved" quotes, but Phase 5.2 (Client LPO &
+/// Booking Status, not yet built) describes a longer lifecycle — "Draft → Issued → LPO
+/// Confirmed → Job Booked" — and every one of those post-Draft states implies the same
+/// "don't silently rewrite this" guarantee an approved quote needs. Defined here now,
+/// as the single source of truth Phase 5.2 should extend rather than re-derive, so the
+/// two phases don't end up with two different lists of "locked" statuses to keep in
+/// sync (the exact class of drift risk Phase R's own module doc already warned about
+/// for `CANONICAL_MODULE_KEYS`).
+pub const LOCKED_STATUSES: &[&str] = &["Approved", "Issued", "LPO Confirmed", "Job Booked"];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuoteRevisionRecord {
+    pub id: String,
+    pub quote_id: String,
+    pub revision_number: i64,
+    pub status_at_snapshot: String,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+/// Fetches a quote by its real row `id` (not `offer_ref`/`rev_suffix`) — needed by
+/// `branch_new_revision` to read the exact locked row being branched from, since two
+/// different revisions can share the same `offer_ref` and only differ by `rev_suffix`.
+/// Tenant isolation: scoped by `tenant_id`, same as `fetch_quote`.
+fn fetch_quote_by_id(
+    conn: &Connection,
+    tenant_id: &str,
+    quote_id: &str,
+) -> Result<Option<QuoteRecord>, QuoteError> {
+    let row = conn
+        .query_row(
+            "SELECT id, tenant_id, user_id, offer_ref, rev_suffix, quote_date,
+                    validity_days, customer_name, customer_po_box, customer_city,
+                    contact_person, customer_email, customer_ref, salesperson_name,
+                    salesperson_phone, subject_text, notes, terms_conditions,
+                    rate_basis_text, total_amount, vat_rate, vat_amount, grand_total,
+                    status, tax_rule_id, created_at, updated_at
+             FROM quotes
+             WHERE tenant_id = ?1 AND id = ?2",
+            params![tenant_id, quote_id],
+            row_to_quote,
+        )
+        .optional()?;
+
+    let mut quote = match row {
+        Some(q) => q,
+        None => return Ok(None),
+    };
+
+    let mut stmt = conn.prepare(
+        "SELECT id, item_order, item_description, make_model, quantity, unit_rate,
+                rate_basis, line_total, equipment_spec
+         FROM quote_items
+         WHERE tenant_id = ?1 AND quote_id = ?2
+         ORDER BY item_order ASC",
+    )?;
+    let items = stmt
+        .query_map(params![tenant_id, quote.id], |row| {
+            Ok(QuoteItemRecord {
+                id: row.get(0)?,
+                item_order: row.get(1)?,
+                item_description: row.get(2)?,
+                make_model: row.get(3)?,
+                quantity: row.get(4)?,
+                unit_rate: row.get(5)?,
+                rate_basis: row.get(6)?,
+                line_total: row.get(7)?,
+                equipment_spec: row.get(8)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    quote.line_items = items;
+    Ok(Some(quote))
+}
+
+/// Lists the audit-logged revision history for `quote_id`, oldest first.
+pub fn fetch_quote_revisions(
+    conn: &Connection,
+    tenant_id: &str,
+    quote_id: &str,
+) -> Result<Vec<QuoteRevisionRecord>, QuoteError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, quote_id, revision_number, status_at_snapshot, created_by, created_at
+         FROM quote_revisions
+         WHERE tenant_id = ?1 AND quote_id = ?2
+         ORDER BY revision_number ASC",
+    )?;
+    let rows = stmt
+        .query_map(params![tenant_id, quote_id], |row| {
+            Ok(QuoteRevisionRecord {
+                id: row.get(0)?,
+                quote_id: row.get(1)?,
+                revision_number: row.get(2)?,
+                status_at_snapshot: row.get(3)?,
+                created_by: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Phase 5.1's actual "modifying a quote creates an audit-logged revision history"
+/// mechanism. Takes a locked quote (`from_quote_id`), snapshots its full current state
+/// (including line items) into `quote_revisions`, then creates a brand-new `quotes` row
+/// under the SAME `offer_ref` with `new_rev_suffix`, copying every editable field and
+/// line item forward, with `status` reset to `"Draft"` (i.e. editable again via the
+/// normal `save_quote` path) and `tax_rule_id` carried forward unchanged.
+///
+/// Returns `(new_quote_id, revision_id)`.
+///
+/// Preconditions, both enforced (not assumed):
+/// - `from_quote_id` must exist for `tenant_id` (else `InvalidPayload`).
+/// - `from_quote_id`'s current status must actually be in `LOCKED_STATUSES` — branching
+///   only makes sense from an approved baseline; a still-Draft quote should just be
+///   edited in place via `save_quote` (else `InvalidPayload`, distinct from the
+///   `Locked` variant `save_quote` returns — this function's precondition is the
+///   opposite direction of that check).
+/// - `new_rev_suffix` must not already exist under this `offer_ref` for this tenant
+///   (else `InvalidPayload` — reuses `save_quote`'s own uniqueness guarantee rather
+///   than relying on the UNIQUE constraint to surface a less specific DB error).
+pub fn branch_new_revision(
+    conn: &Connection,
+    tenant_id: &str,
+    user_id: &str,
+    from_quote_id: &str,
+    new_rev_suffix: &str,
+) -> Result<(String, String), QuoteError> {
+    if new_rev_suffix.trim().is_empty() {
+        return Err(QuoteError::InvalidPayload(
+            "new_rev_suffix is required".to_string(),
+        ));
+    }
+
+    let source = match fetch_quote_by_id(conn, tenant_id, from_quote_id)? {
+        Some(q) => q,
+        None => {
+            return Err(QuoteError::InvalidPayload(format!(
+                "Quote id '{}' not found for this tenant",
+                from_quote_id
+            )))
+        }
+    };
+
+    if !LOCKED_STATUSES.contains(&source.status.as_str()) {
+        return Err(QuoteError::InvalidPayload(format!(
+            "Quote '{}' {} is not locked (status = '{}') — edit it directly via \
+             save_quote instead of branching a new revision.",
+            source.offer_ref, source.rev_suffix, source.status
+        )));
+    }
+
+    let already_exists: Option<i64> = conn
+        .query_row(
+            "SELECT 1 FROM quotes WHERE tenant_id = ?1 AND offer_ref = ?2 AND rev_suffix = ?3",
+            params![tenant_id, source.offer_ref, new_rev_suffix],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if already_exists.is_some() {
+        return Err(QuoteError::InvalidPayload(format!(
+            "Revision '{}' already exists for offer_ref '{}'",
+            new_rev_suffix, source.offer_ref
+        )));
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    let ts = now_timestamp(&tx)?;
+
+    // Snapshot the locked source row's full state (real audit trail, not a live
+    // reference — see migration 005's doc comment) before creating anything new.
+    let next_revision_number: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM quote_revisions
+             WHERE tenant_id = ?1 AND quote_id = ?2",
+            params![tenant_id, from_quote_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(1);
+    let snapshot_json = serde_json::to_string(&source)
+        .map_err(|e| QuoteError::InvalidPayload(format!("failed to serialize snapshot: {}", e)))?;
+    let revision_id = generate_id();
+    tx.execute(
+        "INSERT INTO quote_revisions (
+            id, tenant_id, quote_id, revision_number, snapshot_json, status_at_snapshot,
+            created_by, created_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            revision_id,
+            tenant_id,
+            from_quote_id,
+            next_revision_number,
+            snapshot_json,
+            source.status,
+            user_id,
+            ts,
+        ],
+    )?;
+
+    // Create the new, editable Draft row under the same offer_ref — copying forward
+    // every field save_quote itself accepts, matching its own INSERT column list
+    // exactly so the two never silently diverge in shape.
+    let new_quote_id = generate_id();
+    tx.execute(
+        "INSERT INTO quotes (
+            id, tenant_id, user_id, offer_ref, rev_suffix, quote_date, validity_days,
+            customer_name, customer_po_box, customer_city, contact_person,
+            customer_email, customer_ref, salesperson_name, salesperson_phone,
+            subject_text, notes, terms_conditions, rate_basis_text, total_amount,
+            vat_rate, vat_amount, grand_total, status, tax_rule_id, created_at, updated_at
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+            ?17, ?18, ?19, ?20, ?21, ?22, ?23, 'Draft', ?24, ?25, ?25
+         )",
+        params![
+            new_quote_id,
+            tenant_id,
+            user_id,
+            source.offer_ref,
+            new_rev_suffix,
+            source.quote_date,
+            source.validity_days,
+            source.customer_name,
+            source.customer_po_box,
+            source.customer_city,
+            source.contact_person,
+            source.customer_email,
+            source.customer_ref,
+            source.salesperson_name,
+            source.salesperson_phone,
+            source.subject_text,
+            source.notes,
+            source.terms_conditions,
+            source.rate_basis_text,
+            source.total_amount,
+            source.vat_rate,
+            source.vat_amount,
+            source.grand_total,
+            source.tax_rule_id,
+            ts,
+        ],
+    )?;
+
+    for (idx, item) in source.line_items.iter().enumerate() {
+        let item_ts = now_timestamp(&tx)?;
+        tx.execute(
+            "INSERT INTO quote_items (
+                id, tenant_id, quote_id, item_order, item_description, make_model,
+                quantity, unit_rate, rate_basis, line_total, equipment_spec, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                generate_id(),
+                tenant_id,
+                new_quote_id,
+                (idx as i64) + 1,
+                item.item_description,
+                item.make_model,
+                item.quantity,
+                item.unit_rate,
+                item.rate_basis,
+                item.line_total,
+                item.equipment_spec,
+                item_ts,
+            ],
+        )?;
+    }
+
+    // quote_compliance_terms (Phase 4.1) is deliberately NOT copied forward here —
+    // flagged rather than silently dropped: whether a new Draft revision should inherit
+    // the prior revision's selected compliance clauses automatically, or start empty
+    // and require re-selecting them, is a product decision this function doesn't make
+    // unilaterally. Leaving it empty (the current behavior) is the more conservative
+    // choice — a carried-forward clause silently applying to a revised quote without
+    // the user re-confirming it felt riskier than requiring an explicit re-selection.
+
+    tx.commit()?;
+    Ok((new_quote_id, revision_id))
+}
+
 fn row_to_quote(row: &rusqlite::Row) -> rusqlite::Result<QuoteRecord> {
     Ok(QuoteRecord {
         id: row.get(0)?,
@@ -474,8 +815,9 @@ fn row_to_quote(row: &rusqlite::Row) -> rusqlite::Result<QuoteRecord> {
         vat_amount: row.get(21)?,
         grand_total: row.get(22)?,
         status: row.get(23)?,
-        created_at: row.get(24)?,
-        updated_at: row.get(25)?,
+        tax_rule_id: row.get(24)?,
+        created_at: row.get(25)?,
+        updated_at: row.get(26)?,
         line_items: Vec::new(),
     })
 }
@@ -498,6 +840,9 @@ mod tests {
     use super::*;
 
     const REAL_SCHEMA_SQL: &str = include_str!("../../migrations/001_core_schema.sql");
+    const REAL_SCHEMA_003: &str = include_str!("../../migrations/003_compliance_terms.sql");
+    const REAL_SCHEMA_004: &str = include_str!("../../migrations/004_quotes_tax_rule.sql");
+    const REAL_SCHEMA_005: &str = include_str!("../../migrations/005_quote_revisions.sql");
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -506,6 +851,12 @@ mod tests {
         // + Section C (commented-out Postgres DDL) — safe to execute verbatim against
         // SQLite, same as db.rs's run_migrations does against the real app database.
         conn.execute_batch(REAL_SCHEMA_SQL).unwrap();
+        // Phase 4.2: save_quote now validates tax_rule_id against tax_rules (003) and
+        // writes quotes.tax_rule_id (004) — both must be applied for these tests to
+        // exercise the same schema shape the real app runs against, not a stale subset.
+        conn.execute_batch(REAL_SCHEMA_003).unwrap();
+        conn.execute_batch(REAL_SCHEMA_004).unwrap();
+        conn.execute_batch(REAL_SCHEMA_005).unwrap();
         seed_tenant_and_user(&conn, "tenant-1", "user-1");
         conn
     }
@@ -548,6 +899,7 @@ mod tests {
             vat_amount: Some(50.0),
             grand_total: Some(1050.0),
             status: Some("Draft".to_string()),
+            tax_rule_id: None,
             line_items: vec![QuoteItemInput {
                 item_description: "Excavator, 20T".to_string(),
                 make_model: Some("Cat 320".to_string()),
@@ -706,6 +1058,176 @@ mod tests {
         // tenant-1 can still fetch its own quote.
         let own_result = fetch_quote(&conn, "tenant-1", "QN-EH/500/2026", None).unwrap();
         assert!(own_result.is_some());
+    }
+
+    // ---- Phase 5.1: locking + revision branching ----
+
+    #[test]
+    fn save_quote_is_rejected_once_locked() {
+        let conn = test_conn();
+        let mut quote = sample_quote("QN-EH/800/2026", "Rev.01");
+        quote.status = Some("Draft".to_string());
+        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        // Transition into a locked status -- still allowed, since the row was Draft
+        // (unlocked) at the moment this call started.
+        quote.status = Some("Approved".to_string());
+        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        // Any further save_quote on this exact (offer_ref, rev_suffix) must now be
+        // refused, even a trivial one.
+        quote.customer_name = "Attempted Edit After Approval".to_string();
+        let result = save_quote(&conn, "tenant-1", "user-1", &quote);
+        assert!(matches!(result, Err(QuoteError::Locked(_))));
+
+        // The stored row must be unaffected by the rejected attempt.
+        let fetched = fetch_quote(&conn, "tenant-1", "QN-EH/800/2026", None)
+            .unwrap()
+            .unwrap();
+        assert_ne!(fetched.customer_name, "Attempted Edit After Approval");
+    }
+
+    #[test]
+    fn branch_new_revision_rejects_unlocked_source() {
+        let conn = test_conn();
+        let quote = sample_quote("QN-EH/801/2026", "Rev.01");
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        let result = branch_new_revision(&conn, "tenant-1", "user-1", &quote_id, "Rev.02");
+        assert!(
+            matches!(result, Err(QuoteError::InvalidPayload(_))),
+            "branching from a still-Draft (unlocked) quote must be rejected"
+        );
+    }
+
+    #[test]
+    fn branch_new_revision_creates_snapshot_and_editable_draft_copy() {
+        let conn = test_conn();
+        let mut quote = sample_quote("QN-EH/802/2026", "Rev.01");
+        quote.line_items.push(QuoteItemInput {
+            item_description: "Generator".to_string(),
+            make_model: Some("Cummins".to_string()),
+            quantity: 2,
+            unit_rate: 400.0,
+            rate_basis: "Weekly".to_string(),
+            line_total: 800.0,
+            equipment_spec: None,
+        });
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        quote.status = Some("Approved".to_string());
+        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        let (new_quote_id, revision_id) =
+            branch_new_revision(&conn, "tenant-1", "user-1", &quote_id, "Rev.02").unwrap();
+        assert_ne!(new_quote_id, quote_id);
+        assert!(!revision_id.is_empty());
+
+        // The new row is a real, independent, editable Draft under the same offer_ref.
+        let new_quote = fetch_quote(&conn, "tenant-1", "QN-EH/802/2026", Some("Rev.02"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(new_quote.status, "Draft");
+        assert_eq!(new_quote.offer_ref, "QN-EH/802/2026");
+        assert_eq!(new_quote.line_items.len(), quote.line_items.len());
+        assert!(
+            new_quote.line_items.iter().any(|i| i.item_description == "Generator"),
+            "branched copy must include the extra line item pushed onto the source quote"
+        );
+
+        // The new Draft row can be freely edited (it isn't locked).
+        let mut editable = quote.clone();
+        editable.rev_suffix = "Rev.02".to_string();
+        editable.customer_name = "Edited After Branching".to_string();
+        editable.status = Some("Draft".to_string());
+        save_quote(&conn, "tenant-1", "user-1", &editable).unwrap();
+        let refetched = fetch_quote(&conn, "tenant-1", "QN-EH/802/2026", Some("Rev.02"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(refetched.customer_name, "Edited After Branching");
+
+        // The original locked Rev.01 row is untouched.
+        let original = fetch_quote(&conn, "tenant-1", "QN-EH/802/2026", Some("Rev.01"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(original.status, "Approved");
+        assert_ne!(original.customer_name, "Edited After Branching");
+
+        // A real, audit-logged revision snapshot was recorded.
+        let revisions = fetch_quote_revisions(&conn, "tenant-1", &quote_id).unwrap();
+        assert_eq!(revisions.len(), 1);
+        assert_eq!(revisions[0].revision_number, 1);
+        assert_eq!(revisions[0].status_at_snapshot, "Approved");
+        assert_eq!(revisions[0].created_by, "user-1");
+    }
+
+    #[test]
+    fn branch_new_revision_rejects_duplicate_rev_suffix() {
+        let conn = test_conn();
+        let mut quote = sample_quote("QN-EH/803/2026", "Rev.01");
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        quote.status = Some("Approved".to_string());
+        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        // Rev.02 already exists as a separate quote under the same offer_ref.
+        let mut rev2 = quote.clone();
+        rev2.rev_suffix = "Rev.02".to_string();
+        rev2.status = Some("Draft".to_string());
+        save_quote(&conn, "tenant-1", "user-1", &rev2).unwrap();
+
+        let result = branch_new_revision(&conn, "tenant-1", "user-1", &quote_id, "Rev.02");
+        assert!(matches!(result, Err(QuoteError::InvalidPayload(_))));
+    }
+
+    #[test]
+    fn branch_new_revision_is_tenant_isolated() {
+        let conn = test_conn();
+        seed_tenant_and_user(&conn, "tenant-2", "user-2");
+        let mut quote = sample_quote("QN-EH/804/2026", "Rev.01");
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        quote.status = Some("Approved".to_string());
+        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        // tenant-2 cannot branch a revision from tenant-1's locked quote.
+        let result = branch_new_revision(&conn, "tenant-2", "user-2", &quote_id, "Rev.02");
+        assert!(matches!(result, Err(QuoteError::InvalidPayload(_))));
+    }
+
+    #[test]
+    fn save_quote_with_owned_tax_rule_id_round_trips() {
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO tax_rules (id, tenant_id, region_label, rate, is_default, is_active, created_at, updated_at)
+             VALUES ('rule-1', 'tenant-1', 'UAE Standard VAT', 5.0, 1, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+
+        let mut quote = sample_quote("QN-EH/700/2026", "Rev.01");
+        quote.tax_rule_id = Some("rule-1".to_string());
+        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        let fetched = fetch_quote(&conn, "tenant-1", "QN-EH/700/2026", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.tax_rule_id, Some("rule-1".to_string()));
+    }
+
+    #[test]
+    fn save_quote_rejects_another_tenants_tax_rule_id() {
+        let conn = test_conn();
+        seed_tenant_and_user(&conn, "tenant-2", "user-2");
+        conn.execute(
+            "INSERT INTO tax_rules (id, tenant_id, region_label, rate, is_default, is_active, created_at, updated_at)
+             VALUES ('rule-foreign', 'tenant-2', 'Not Yours', 5.0, 1, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+
+        let mut quote = sample_quote("QN-EH/701/2026", "Rev.01");
+        quote.tax_rule_id = Some("rule-foreign".to_string());
+        let result = save_quote(&conn, "tenant-1", "user-1", &quote);
+        assert!(matches!(result, Err(QuoteError::InvalidPayload(_))));
     }
 
     #[test]
