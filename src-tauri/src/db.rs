@@ -47,6 +47,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "005_quote_revisions.sql",
         include_str!("../../migrations/005_quote_revisions.sql"),
     ),
+    (
+        "006_lpo_tracking.sql",
+        include_str!("../../migrations/006_lpo_tracking.sql"),
+    ),
 ];
 
 /// Resolves the on-disk path for the real SQLite database file, inside the app's

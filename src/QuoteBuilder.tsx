@@ -34,13 +34,26 @@ import React, { useState } from 'react';
 import { isDesktopMode, tauriInvoke } from '../src-shared/tauri-bridge';
 import DateRangePicker from './components/DateRangePicker';
 import { RateBasisLegend } from './components/RateBasisLegend';
+// Phase 5.2: the real native file-dialog plugin attach_lpo's file-path guardrail
+// depends on (route-map-v2.docx Section 1.1) -- see lib.rs's `.plugin()` registration
+// and capabilities/default.json's "dialog:allow-open" permission, both added alongside
+// this import so the three pieces (JS import, Rust registration, capability grant)
+// don't end up split across commits the way plugin-dialog previously was (present in
+// package.json only, wired nowhere).
+import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
 
 // Phase 5.1: mirrors quotes.rs::LOCKED_STATUSES exactly, for the UI's "locked" badge
 // only -- the real enforcement is server-side in quotes::save_quote; this constant
 // controls nothing except a visual hint, so if it drifts out of sync the worst case is
 // a stale badge, not a security gap. Flagged rather than left silently duplicated,
 // matching this project's established practice for CANONICAL_MODULE_KEYS-shaped risks.
-const quotes_rs_locked_statuses = ['Approved', 'Issued', 'LPO Confirmed', 'Job Booked'];
+// Phase 5.2 correction: "Approved" was this project's own guess in Phase 5.1, made
+// before the real lifecycle was known -- route-map-v2.docx Phase 5.2 gives the actual,
+// authoritative lifecycle (no "Approved" state exists in it). Mirrors
+// quotes.rs::LOCKED_STATUSES / STATUS_LIFECYCLE exactly now. Still just a UI hint (see
+// original comment below) -- real enforcement is server-side.
+const quotes_rs_locked_statuses = ['Issued', 'LPO Confirmed', 'Job Booked'];
+const quotes_rs_status_lifecycle = ['Draft', 'Issued', 'LPO Confirmed', 'Job Booked'];
 
 interface LineItemDraft {
   item_description: string;
@@ -115,12 +128,17 @@ function QuoteBuilder() {
   // branch into a new rev_suffix (Rev.01 -> Rev.02) and the UI needed to actually track
   // which revision is currently being viewed/edited.
   const [revSuffix, setRevSuffix] = useState('Rev.01');
-  const [quoteStatusToSave, setQuoteStatusToSave] = useState<'Draft' | 'Approved'>('Draft');
+  // Phase 5.2 correction: removed quoteStatusToSave (Draft/Approved selector) -- save_quote
+  // no longer accepts anything but Draft. Lifecycle state now lives in currentStatus,
+  // advanced only via runAdvanceStatus.
   // Populated from save_quote/fetch_quote responses -- what branch_new_revision and the
   // "currently locked?" UI hint below actually act on.
   const [currentQuoteId, setCurrentQuoteId] = useState<string | null>(null);
   const [currentStatus, setCurrentStatus] = useState<string | null>(null);
   const [newRevSuffix, setNewRevSuffix] = useState('Rev.02');
+  // Phase 5.2 — LPO tracking modal state.
+  const [lpoNumber, setLpoNumber] = useState('');
+  const [lpoFilePath, setLpoFilePath] = useState<string | null>(null);
 
   const [loggedIn, setLoggedIn] = useState(false);
   const [sessionRegistered, setSessionRegistered] = useState(false);
@@ -390,7 +408,11 @@ function QuoteBuilder() {
             // against. Empty selection -> null -> build_pdf_context falls back to the
             // tenant default (or the legacy flat 5%) exactly as before Phase 4.2.
             tax_rule_id: selectedTaxRuleId || null,
-            status: quoteStatusToSave,
+            // Phase 5.2 correction: save_quote now only ever accepts "Draft" (see
+            // quotes.rs's own doc comment on why) -- the quoteStatusToSave selector
+            // this used to read from is gone; lifecycle progression happens
+            // exclusively through runAdvanceStatus below.
+            status: 'Draft',
             line_items: lineItems.map((li) => ({
               item_description: li.item_description,
               make_model: li.make_model || null,
@@ -406,7 +428,7 @@ function QuoteBuilder() {
       setStatus(`save_quote: ${res.status} ${res.message}`);
       if (res.status === 200 && res.data?.quote_id) {
         setCurrentQuoteId(res.data.quote_id);
-        setCurrentStatus(quoteStatusToSave);
+        setCurrentStatus('Draft');
       }
 
       // Phase 4.2: attach_terms_to_quote is a separate call (compliance.rs's own
@@ -479,6 +501,82 @@ function QuoteBuilder() {
       }
     } catch (err) {
       setStatus(`branch_new_revision failed: ${(err as Error).message}`);
+    }
+  };
+
+  // Phase 5.2: derives the single valid next lifecycle step from currentStatus, or
+  // null once at the end ("Job Booked") -- mirrors quotes.rs::update_quote_status's own
+  // "exactly one step forward" rule so the button never even offers an invalid move.
+  const nextStatus = (() => {
+    if (!currentStatus) return null;
+    const idx = quotes_rs_status_lifecycle.indexOf(currentStatus);
+    if (idx === -1 || idx === quotes_rs_status_lifecycle.length - 1) return null;
+    return quotes_rs_status_lifecycle[idx + 1];
+  })();
+
+  const runAdvanceStatus = async () => {
+    if (!currentQuoteId || !nextStatus) {
+      setStatus('update_quote_status: no quote_id/current status loaded, or already at the final status');
+      return;
+    }
+    try {
+      const res = await tauriInvoke<IpcResponse>('handle_guarded_ipc', {
+        command_name: 'update_quote_status',
+        session_token: sessionToken,
+        payload: { quote_id: currentQuoteId, new_status: nextStatus },
+      });
+      setStatus(`update_quote_status: ${res.status} ${res.message}`);
+      if (res.status === 200) {
+        setCurrentStatus(nextStatus);
+      }
+    } catch (err) {
+      setStatus(`update_quote_status failed: ${(err as Error).message}`);
+    }
+  };
+
+  // Phase 5.2: real native file picker (route-map-v2.docx Section 1.1 guardrail) --
+  // the path stored is whatever the OS's own dialog returns, never typed/constructed
+  // free text. Requires lib.rs's `.plugin(tauri_plugin_dialog::init())` registration
+  // and the "dialog:allow-open" capability permission (both added alongside this).
+  const runPickLpoFile = async () => {
+    try {
+      const selected = await openFileDialog({
+        multiple: false,
+        title: 'Select LPO document',
+      });
+      if (typeof selected === 'string') {
+        setLpoFilePath(selected);
+        setStatus(`LPO file selected: ${selected}`);
+      } else {
+        setStatus('LPO file selection cancelled');
+      }
+    } catch (err) {
+      setStatus(`File dialog failed: ${(err as Error).message}`);
+    }
+  };
+
+  const runAttachLpo = async () => {
+    if (!currentQuoteId) {
+      setStatus('attach_lpo: save or fetch a quote first to get a quote_id');
+      return;
+    }
+    if (!lpoNumber.trim()) {
+      setStatus('attach_lpo: LPO number is required');
+      return;
+    }
+    try {
+      const res = await tauriInvoke<IpcResponse>('handle_guarded_ipc', {
+        command_name: 'attach_lpo',
+        session_token: sessionToken,
+        payload: {
+          quote_id: currentQuoteId,
+          lpo_number: lpoNumber,
+          lpo_file_path: lpoFilePath || null,
+        },
+      });
+      setStatus(`attach_lpo: ${res.status} ${res.message}`);
+    } catch (err) {
+      setStatus(`attach_lpo failed: ${(err as Error).message}`);
     }
   };
 
@@ -768,14 +866,7 @@ function QuoteBuilder() {
             {quotes_rs_locked_statuses.includes(currentStatus) ? ' (locked)' : ''}
           </span>
         )}
-        <select
-          value={quoteStatusToSave}
-          onChange={(e) => setQuoteStatusToSave(e.target.value as 'Draft' | 'Approved')}
-        >
-          <option value="Draft">Save as Draft</option>
-          <option value="Approved">Save as Approved (locks it)</option>
-        </select>
-        <button onClick={runSaveQuote}>4. Save quote</button>
+        <button onClick={runSaveQuote}>4. Save quote (Draft only)</button>
         <button onClick={runFetchQuote}>
           5. Fetch quote (re-run after an app restart to verify persistence)
         </button>
@@ -793,6 +884,52 @@ function QuoteBuilder() {
           style={{ width: '140px' }}
         />
         <button onClick={runBranchNewRevision}>7. Branch new revision</button>
+      </div>
+
+      {/* Phase 5.2 — status lifecycle progression (Draft -> Issued -> LPO Confirmed ->
+          Job Booked), one step at a time, and the Purchase Order tracking modal. */}
+      <div style={{ marginTop: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <span style={{ fontSize: '13px' }}>Advance status:</span>
+        <button onClick={runAdvanceStatus} disabled={!nextStatus}>
+          8. {nextStatus ? `Advance to "${nextStatus}"` : 'No further status (Job Booked)'}
+        </button>
+      </div>
+
+      <div
+        style={{
+          marginTop: '12px',
+          padding: '12px',
+          border: '1px solid #d0d7de',
+          borderRadius: '6px',
+          maxWidth: '480px',
+        }}
+      >
+        <strong style={{ fontSize: '13px' }}>
+          9. Purchase Order (LPO) tracking
+          {currentStatus && quotes_rs_status_lifecycle.indexOf(currentStatus) < 1 && (
+            <span style={{ fontWeight: 400, color: '#5a6b75' }}>
+              {' '}
+              — advance past Draft first
+            </span>
+          )}
+        </strong>
+        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' }}>
+          <input
+            placeholder="LPO number"
+            value={lpoNumber}
+            onChange={(e) => setLpoNumber(e.target.value)}
+            style={{ width: '160px' }}
+          />
+          <button onClick={runPickLpoFile}>
+            {lpoFilePath ? 'File selected ✓' : 'Choose LPO file...'}
+          </button>
+          <button onClick={runAttachLpo}>Attach LPO</button>
+        </div>
+        {lpoFilePath && (
+          <p style={{ fontSize: '11px', color: '#5a6b75', marginTop: '4px', wordBreak: 'break-all' }}>
+            {lpoFilePath}
+          </p>
+        )}
       </div>
 
       {pdfPath && (

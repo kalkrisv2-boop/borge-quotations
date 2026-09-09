@@ -156,6 +156,13 @@ pub struct QuoteRecord {
     pub line_items: Vec<QuoteItemRecord>,
     /// Phase 4.2 — see `QuoteInput::tax_rule_id`'s doc comment.
     pub tax_rule_id: Option<String>,
+    /// Phase 5.2 — LPO tracking (migration 006). All `None` until `attach_lpo` is
+    /// called; not settable via `save_quote`/`QuoteInput` at all (see `attach_lpo`'s
+    /// doc comment for why this is a dedicated, narrower mutation path).
+    pub lpo_number: Option<String>,
+    pub lpo_file_path: Option<String>,
+    pub lpo_attached_at: Option<String>,
+    pub lpo_attached_by: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -232,6 +239,23 @@ pub fn save_quote(
         return Err(QuoteError::InvalidPayload(
             "rev_suffix is required".to_string(),
         ));
+    }
+
+    // Phase 5.2: status was previously an unchecked free string, settable to ANY
+    // value via this general-purpose save — including skipping straight from "Draft"
+    // to "Job Booked" with no LPO ever attached, defeating the entire point of a
+    // "status lifecycle" as a real deliverable. save_quote is now restricted to only
+    // ever setting/leaving status at "Draft" (its own default). Every forward
+    // transition goes exclusively through update_quote_status below, which enforces
+    // the lifecycle strictly one step at a time.
+    if let Some(status) = &quote.status {
+        if status != "Draft" {
+            return Err(QuoteError::InvalidPayload(format!(
+                "save_quote can only set status to 'Draft'; got {:?}. Use \
+                 update_quote_status to advance a quote through {:?}.",
+                status, STATUS_LIFECYCLE
+            )));
+        }
     }
 
     // Phase 4.2 / migration 004: `tax_rule_id` has no composite (id, tenant_id) DB-level
@@ -447,7 +471,8 @@ pub fn fetch_quote(
                         contact_person, customer_email, customer_ref, salesperson_name,
                         salesperson_phone, subject_text, notes, terms_conditions,
                         rate_basis_text, total_amount, vat_rate, vat_amount, grand_total,
-                        status, tax_rule_id, created_at, updated_at
+                        status, tax_rule_id, lpo_number, lpo_file_path, lpo_attached_at,
+                    lpo_attached_by, created_at, updated_at
                  FROM quotes
                  WHERE tenant_id = ?1 AND offer_ref = ?2 AND rev_suffix = ?3",
                 params![tenant_id, offer_ref, rev],
@@ -461,7 +486,8 @@ pub fn fetch_quote(
                         contact_person, customer_email, customer_ref, salesperson_name,
                         salesperson_phone, subject_text, notes, terms_conditions,
                         rate_basis_text, total_amount, vat_rate, vat_amount, grand_total,
-                        status, tax_rule_id, created_at, updated_at
+                        status, tax_rule_id, lpo_number, lpo_file_path, lpo_attached_at,
+                    lpo_attached_by, created_at, updated_at
                  FROM quotes
                  WHERE tenant_id = ?1 AND offer_ref = ?2
                  ORDER BY updated_at DESC, rowid DESC
@@ -518,7 +544,30 @@ pub fn fetch_quote(
 /// two phases don't end up with two different lists of "locked" statuses to keep in
 /// sync (the exact class of drift risk Phase R's own module doc already warned about
 /// for `CANONICAL_MODULE_KEYS`).
-pub const LOCKED_STATUSES: &[&str] = &["Approved", "Issued", "LPO Confirmed", "Job Booked"];
+/// Phase 5.1 originally listed `"Approved"` as a locked status alongside the three
+/// below — flagged explicitly at the time as this project's own extrapolation, since
+/// Phase 5.1's Completion Check only said "approved" in passing and no canonical
+/// lifecycle had been specified yet. `route-map-v2.docx` Phase 5.2 now gives the real,
+/// authoritative lifecycle: "Draft → Issued → LPO Confirmed → Job Booked" — no
+/// "Approved" state exists in it at all. Corrected here rather than carried forward:
+/// `"Approved"` is removed. This is a real, deliberate behavior change from Phase 5.1
+/// (existing tests referencing `"Approved"` were updated to `"Issued"` in the same
+/// change), not a silent rename — flagged per this project's practice of stating
+/// corrections rather than quietly absorbing them.
+pub const LOCKED_STATUSES: &[&str] = &["Issued", "LPO Confirmed", "Job Booked"];
+
+/// Phase 5.2: the canonical, ordered status lifecycle. `status_transition_index`
+/// enforces that a quote can only ever move forward through this exact sequence, one
+/// step at a time — no skipping (Draft straight to "Job Booked") and no going backward
+/// (an LPO Confirmed quote silently un-confirming). `save_quote` validates any
+/// caller-supplied `status` is a member of this list at all (previously an unchecked
+/// free string); `update_quote_status` is the only path allowed to advance a quote past
+/// its current position.
+pub const STATUS_LIFECYCLE: &[&str] = &["Draft", "Issued", "LPO Confirmed", "Job Booked"];
+
+fn status_lifecycle_index(status: &str) -> Option<usize> {
+    STATUS_LIFECYCLE.iter().position(|s| *s == status)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuoteRevisionRecord {
@@ -546,7 +595,8 @@ fn fetch_quote_by_id(
                     contact_person, customer_email, customer_ref, salesperson_name,
                     salesperson_phone, subject_text, notes, terms_conditions,
                     rate_basis_text, total_amount, vat_rate, vat_amount, grand_total,
-                    status, tax_rule_id, created_at, updated_at
+                    status, tax_rule_id, lpo_number, lpo_file_path, lpo_attached_at,
+                    lpo_attached_by, created_at, updated_at
              FROM quotes
              WHERE tenant_id = ?1 AND id = ?2",
             params![tenant_id, quote_id],
@@ -789,6 +839,147 @@ pub fn branch_new_revision(
     Ok((new_quote_id, revision_id))
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5.2 — Status Lifecycle & LPO Tracking
+// ---------------------------------------------------------------------------
+
+/// Advances `quote_id` exactly one step forward through `STATUS_LIFECYCLE`. This is
+/// the ONLY function permitted to move a quote past "Draft" — `save_quote` refuses to
+/// set any other status (see its own doc comment above), and this function itself
+/// refuses anything other than a single forward step: no skipping ahead ("Draft"
+/// straight to "Job Booked"), no moving backward, and no no-op re-application of the
+/// current status. Deliberately allowed to run even though the target row may already
+/// be in `LOCKED_STATUSES` — locking protects quote CONTENT from `save_quote`, not
+/// legitimate lifecycle progression, which is the entire point of this function
+/// existing as a separate, narrower path.
+pub fn update_quote_status(
+    conn: &Connection,
+    tenant_id: &str,
+    quote_id: &str,
+    new_status: &str,
+) -> Result<(), QuoteError> {
+    let current_status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM quotes WHERE id = ?1 AND tenant_id = ?2",
+            params![quote_id, tenant_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let current_status = match current_status {
+        Some(s) => s,
+        None => {
+            return Err(QuoteError::InvalidPayload(format!(
+                "Quote id '{}' not found for this tenant",
+                quote_id
+            )))
+        }
+    };
+
+    let current_idx = status_lifecycle_index(&current_status).ok_or_else(|| {
+        QuoteError::InvalidPayload(format!(
+            "Quote's stored status '{}' is not a recognized lifecycle value \
+             (pre-Phase-5.2 data?) — cannot compute a valid next step.",
+            current_status
+        ))
+    })?;
+    let new_idx = status_lifecycle_index(new_status).ok_or_else(|| {
+        QuoteError::InvalidPayload(format!(
+            "new_status must be one of {:?}, got {:?}",
+            STATUS_LIFECYCLE, new_status
+        ))
+    })?;
+
+    if new_idx != current_idx + 1 {
+        return Err(QuoteError::InvalidPayload(format!(
+            "Cannot move status from '{}' to '{}' — {:?} only allows moving forward \
+             exactly one step at a time.",
+            current_status, new_status, STATUS_LIFECYCLE
+        )));
+    }
+
+    let ts = now_timestamp(conn)?;
+    let rows = conn.execute(
+        "UPDATE quotes SET status = ?1, updated_at = ?2 WHERE id = ?3 AND tenant_id = ?4",
+        params![new_status, ts, quote_id, tenant_id],
+    )?;
+    if rows == 0 {
+        // Can only happen from a race (row deleted between the SELECT above and this
+        // UPDATE) — the earlier existence check already covered the ordinary case.
+        return Err(QuoteError::InvalidPayload(format!(
+            "Quote id '{}' not found for this tenant",
+            quote_id
+        )));
+    }
+    Ok(())
+}
+
+/// Attaches Purchase Order details to a quote. Per Phase 5.2's Completion Check
+/// ("...attach to CONFIRMED quotes"), only permitted once a quote has actually left
+/// "Draft" (i.e. `status_lifecycle_index >= 1`, meaning at least "Issued") — attaching
+/// an LPO to a still-unconfirmed Draft quote is refused, not silently allowed.
+///
+/// `lpo_file_path` guardrail (migration 006's doc comment, route-map-v2.docx Section
+/// 1.1): this function trusts whatever path string it's given — it is the CALLER's
+/// responsibility (the Tauri command handler in `lib.rs`, ultimately the frontend's
+/// `@tauri-apps/plugin-dialog` picker) to have obtained that path from a real native
+/// file dialog, never from unvalidated free text. Enforced by not being independently
+/// re-verifiable at this layer (this function has no filesystem access here), flagged
+/// rather than silently assumed safe.
+pub fn attach_lpo(
+    conn: &Connection,
+    tenant_id: &str,
+    user_id: &str,
+    quote_id: &str,
+    lpo_number: &str,
+    lpo_file_path: Option<&str>,
+) -> Result<(), QuoteError> {
+    if lpo_number.trim().is_empty() {
+        return Err(QuoteError::InvalidPayload(
+            "lpo_number is required".to_string(),
+        ));
+    }
+
+    let current_status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM quotes WHERE id = ?1 AND tenant_id = ?2",
+            params![quote_id, tenant_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let current_status = match current_status {
+        Some(s) => s,
+        None => {
+            return Err(QuoteError::InvalidPayload(format!(
+                "Quote id '{}' not found for this tenant",
+                quote_id
+            )))
+        }
+    };
+    let idx = status_lifecycle_index(&current_status).unwrap_or(0);
+    if idx == 0 {
+        return Err(QuoteError::InvalidPayload(
+            "Cannot attach an LPO to a quote still in 'Draft' status — advance it to \
+             'Issued' via update_quote_status first."
+                .to_string(),
+        ));
+    }
+
+    let ts = now_timestamp(conn)?;
+    let rows = conn.execute(
+        "UPDATE quotes SET lpo_number = ?1, lpo_file_path = ?2, lpo_attached_at = ?3,
+                lpo_attached_by = ?4, updated_at = ?3
+         WHERE id = ?5 AND tenant_id = ?6",
+        params![lpo_number, lpo_file_path, ts, user_id, quote_id, tenant_id],
+    )?;
+    if rows == 0 {
+        return Err(QuoteError::InvalidPayload(format!(
+            "Quote id '{}' not found for this tenant",
+            quote_id
+        )));
+    }
+    Ok(())
+}
+
 fn row_to_quote(row: &rusqlite::Row) -> rusqlite::Result<QuoteRecord> {
     Ok(QuoteRecord {
         id: row.get(0)?,
@@ -816,8 +1007,12 @@ fn row_to_quote(row: &rusqlite::Row) -> rusqlite::Result<QuoteRecord> {
         grand_total: row.get(22)?,
         status: row.get(23)?,
         tax_rule_id: row.get(24)?,
-        created_at: row.get(25)?,
-        updated_at: row.get(26)?,
+        lpo_number: row.get(25)?,
+        lpo_file_path: row.get(26)?,
+        lpo_attached_at: row.get(27)?,
+        lpo_attached_by: row.get(28)?,
+        created_at: row.get(29)?,
+        updated_at: row.get(30)?,
         line_items: Vec::new(),
     })
 }
@@ -843,6 +1038,7 @@ mod tests {
     const REAL_SCHEMA_003: &str = include_str!("../../migrations/003_compliance_terms.sql");
     const REAL_SCHEMA_004: &str = include_str!("../../migrations/004_quotes_tax_rule.sql");
     const REAL_SCHEMA_005: &str = include_str!("../../migrations/005_quote_revisions.sql");
+    const REAL_SCHEMA_006: &str = include_str!("../../migrations/006_lpo_tracking.sql");
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -857,6 +1053,7 @@ mod tests {
         conn.execute_batch(REAL_SCHEMA_003).unwrap();
         conn.execute_batch(REAL_SCHEMA_004).unwrap();
         conn.execute_batch(REAL_SCHEMA_005).unwrap();
+        conn.execute_batch(REAL_SCHEMA_006).unwrap();
         seed_tenant_and_user(&conn, "tenant-1", "user-1");
         conn
     }
@@ -1067,12 +1264,11 @@ mod tests {
         let conn = test_conn();
         let mut quote = sample_quote("QN-EH/800/2026", "Rev.01");
         quote.status = Some("Draft".to_string());
-        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
 
-        // Transition into a locked status -- still allowed, since the row was Draft
-        // (unlocked) at the moment this call started.
-        quote.status = Some("Approved".to_string());
-        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        // Advance into a locked status via the dedicated lifecycle function -- this is
+        // no longer something save_quote itself can do (Phase 5.2 correction).
+        update_quote_status(&conn, "tenant-1", &quote_id, "Issued").unwrap();
 
         // Any further save_quote on this exact (offer_ref, rev_suffix) must now be
         // refused, even a trivial one.
@@ -1085,6 +1281,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_ne!(fetched.customer_name, "Attempted Edit After Approval");
+        assert_eq!(fetched.status, "Issued");
     }
 
     #[test]
@@ -1115,8 +1312,7 @@ mod tests {
         });
         let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
 
-        quote.status = Some("Approved".to_string());
-        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        update_quote_status(&conn, "tenant-1", &quote_id, "Issued").unwrap();
 
         let (new_quote_id, revision_id) =
             branch_new_revision(&conn, "tenant-1", "user-1", &quote_id, "Rev.02").unwrap();
@@ -1150,24 +1346,23 @@ mod tests {
         let original = fetch_quote(&conn, "tenant-1", "QN-EH/802/2026", Some("Rev.01"))
             .unwrap()
             .unwrap();
-        assert_eq!(original.status, "Approved");
+        assert_eq!(original.status, "Issued");
         assert_ne!(original.customer_name, "Edited After Branching");
 
         // A real, audit-logged revision snapshot was recorded.
         let revisions = fetch_quote_revisions(&conn, "tenant-1", &quote_id).unwrap();
         assert_eq!(revisions.len(), 1);
         assert_eq!(revisions[0].revision_number, 1);
-        assert_eq!(revisions[0].status_at_snapshot, "Approved");
+        assert_eq!(revisions[0].status_at_snapshot, "Issued");
         assert_eq!(revisions[0].created_by, "user-1");
     }
 
     #[test]
     fn branch_new_revision_rejects_duplicate_rev_suffix() {
         let conn = test_conn();
-        let mut quote = sample_quote("QN-EH/803/2026", "Rev.01");
+        let quote = sample_quote("QN-EH/803/2026", "Rev.01");
         let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
-        quote.status = Some("Approved".to_string());
-        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        update_quote_status(&conn, "tenant-1", &quote_id, "Issued").unwrap();
 
         // Rev.02 already exists as a separate quote under the same offer_ref.
         let mut rev2 = quote.clone();
@@ -1183,14 +1378,127 @@ mod tests {
     fn branch_new_revision_is_tenant_isolated() {
         let conn = test_conn();
         seed_tenant_and_user(&conn, "tenant-2", "user-2");
-        let mut quote = sample_quote("QN-EH/804/2026", "Rev.01");
+        let quote = sample_quote("QN-EH/804/2026", "Rev.01");
         let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
-        quote.status = Some("Approved".to_string());
-        save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        update_quote_status(&conn, "tenant-1", &quote_id, "Issued").unwrap();
 
         // tenant-2 cannot branch a revision from tenant-1's locked quote.
         let result = branch_new_revision(&conn, "tenant-2", "user-2", &quote_id, "Rev.02");
         assert!(matches!(result, Err(QuoteError::InvalidPayload(_))));
+    }
+
+    // ---- Phase 5.2: status lifecycle + LPO tracking ----
+
+    #[test]
+    fn update_quote_status_allows_only_single_forward_steps() {
+        let conn = test_conn();
+        let quote = sample_quote("QN-EH/900/2026", "Rev.01");
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        // Draft -> Issued: fine.
+        update_quote_status(&conn, "tenant-1", &quote_id, "Issued").unwrap();
+        // Issued -> Issued (no-op re-application): rejected.
+        assert!(matches!(
+            update_quote_status(&conn, "tenant-1", &quote_id, "Issued"),
+            Err(QuoteError::InvalidPayload(_))
+        ));
+        // Issued -> Draft (backward): rejected.
+        assert!(matches!(
+            update_quote_status(&conn, "tenant-1", &quote_id, "Draft"),
+            Err(QuoteError::InvalidPayload(_))
+        ));
+        // Issued -> Job Booked (skips "LPO Confirmed"): rejected.
+        assert!(matches!(
+            update_quote_status(&conn, "tenant-1", &quote_id, "Job Booked"),
+            Err(QuoteError::InvalidPayload(_))
+        ));
+        // Issued -> LPO Confirmed: the one valid next step.
+        update_quote_status(&conn, "tenant-1", &quote_id, "LPO Confirmed").unwrap();
+        let fetched = fetch_quote(&conn, "tenant-1", "QN-EH/900/2026", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, "LPO Confirmed");
+    }
+
+    #[test]
+    fn save_quote_can_no_longer_set_arbitrary_status() {
+        let conn = test_conn();
+        let mut quote = sample_quote("QN-EH/901/2026", "Rev.01");
+        quote.status = Some("Job Booked".to_string());
+        let result = save_quote(&conn, "tenant-1", "user-1", &quote);
+        assert!(
+            matches!(result, Err(QuoteError::InvalidPayload(_))),
+            "save_quote must reject any status other than Draft -- lifecycle skip-ahead must go through update_quote_status instead"
+        );
+    }
+
+    #[test]
+    fn attach_lpo_requires_quote_past_draft() {
+        let conn = test_conn();
+        let quote = sample_quote("QN-EH/902/2026", "Rev.01");
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        let result = attach_lpo(&conn, "tenant-1", "user-1", &quote_id, "LPO-12345", None);
+        assert!(
+            matches!(result, Err(QuoteError::InvalidPayload(_))),
+            "attaching an LPO to a still-Draft quote must be rejected"
+        );
+    }
+
+    #[test]
+    fn attach_lpo_round_trips_and_appears_on_fetch() {
+        let conn = test_conn();
+        let quote = sample_quote("QN-EH/903/2026", "Rev.01");
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        update_quote_status(&conn, "tenant-1", &quote_id, "Issued").unwrap();
+
+        attach_lpo(
+            &conn,
+            "tenant-1",
+            "user-1",
+            &quote_id,
+            "LPO-98765",
+            Some("/home/sales/Documents/LPO-98765.pdf"),
+        )
+        .unwrap();
+
+        let fetched = fetch_quote(&conn, "tenant-1", "QN-EH/903/2026", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.lpo_number, Some("LPO-98765".to_string()));
+        assert_eq!(
+            fetched.lpo_file_path,
+            Some("/home/sales/Documents/LPO-98765.pdf".to_string())
+        );
+        assert_eq!(fetched.lpo_attached_by, Some("user-1".to_string()));
+        assert!(fetched.lpo_attached_at.is_some());
+    }
+
+    #[test]
+    fn attach_lpo_rejects_empty_lpo_number() {
+        let conn = test_conn();
+        let quote = sample_quote("QN-EH/904/2026", "Rev.01");
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+        update_quote_status(&conn, "tenant-1", &quote_id, "Issued").unwrap();
+
+        let result = attach_lpo(&conn, "tenant-1", "user-1", &quote_id, "  ", None);
+        assert!(matches!(result, Err(QuoteError::InvalidPayload(_))));
+    }
+
+    #[test]
+    fn update_quote_status_is_tenant_isolated() {
+        let conn = test_conn();
+        seed_tenant_and_user(&conn, "tenant-2", "user-2");
+        let quote = sample_quote("QN-EH/905/2026", "Rev.01");
+        let quote_id = save_quote(&conn, "tenant-1", "user-1", &quote).unwrap();
+
+        let result = update_quote_status(&conn, "tenant-2", &quote_id, "Issued");
+        assert!(matches!(result, Err(QuoteError::InvalidPayload(_))));
+        // Confirm it genuinely didn't change under tenant-1 either.
+        let fetched = fetch_quote(&conn, "tenant-1", "QN-EH/905/2026", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, "Draft");
     }
 
     #[test]

@@ -70,6 +70,13 @@ fn required_module_key(command_name: &str) -> Option<&'static str> {
         // Phase 5.1: revision history/branching is a quotes_core capability, same
         // reasoning as generate_quote_pdf above -- not a separate module key.
         "fetch_quote_revisions" | "branch_new_revision" => Some("quotes_core"),
+        // Phase 5.2: status lifecycle progression and LPO tracking are quotes_core
+        // capabilities too, same reasoning -- route-map-v2.docx's own
+        // CANONICAL_MODULE_KEYS list (5 entries, checked in the test below) has no
+        // separate "lpo_tracking" key, and this project's established pattern (PDF
+        // export, revision branching) is to fold closely-related quote actions into
+        // quotes_core rather than invent a new key per verb.
+        "update_quote_status" | "attach_lpo" => Some("quotes_core"),
         // Phase 4.2: compliance_terms was already reserved as a module key in
         // 001_core_schema.sql's comment since Phase R.0 — this is the first phase that
         // actually implements commands behind it.
@@ -679,6 +686,83 @@ async fn handle_guarded_ipc(
                         "new_quote_id": new_quote_id,
                         "revision_id": revision_id,
                     })),
+                }),
+                Err(e) => Ok(quote_error_response(e)),
+            }
+        }
+
+        "update_quote_status" => {
+            #[derive(serde::Deserialize)]
+            struct UpdateStatusRequest {
+                quote_id: String,
+                new_status: String,
+            }
+            let req: UpdateStatusRequest = match payload
+                .as_ref()
+                .and_then(|p| serde_json::from_value(p.clone()).ok())
+            {
+                Some(r) => r,
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Invalid or missing payload for update_quote_status \
+                                  (expected 'quote_id' and 'new_status')"
+                            .into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            match quotes::update_quote_status(&conn, &tenant_id, &req.quote_id, &req.new_status) {
+                Ok(()) => Ok(IpcResponse {
+                    status: 200,
+                    message: "Quote status updated".into(),
+                    data: None,
+                }),
+                Err(e) => Ok(quote_error_response(e)),
+            }
+        }
+        "attach_lpo" => {
+            #[derive(serde::Deserialize)]
+            struct AttachLpoRequest {
+                quote_id: String,
+                lpo_number: String,
+                // FILE-PATH GUARDRAIL (route-map-v2.docx Section 1.1, migration 006's
+                // doc comment): this string must have come from the frontend's real
+                // @tauri-apps/plugin-dialog native file picker, never typed/constructed
+                // free text. Not independently re-verifiable at this layer (no
+                // filesystem access here) -- flagged, not silently trusted without
+                // comment.
+                lpo_file_path: Option<String>,
+            }
+            let req: AttachLpoRequest = match payload
+                .as_ref()
+                .and_then(|p| serde_json::from_value(p.clone()).ok())
+            {
+                Some(r) => r,
+                None => {
+                    return Ok(IpcResponse {
+                        status: 400,
+                        message: "Invalid or missing payload for attach_lpo \
+                                  (expected 'quote_id', 'lpo_number', optional 'lpo_file_path')"
+                            .into(),
+                        data: None,
+                    });
+                }
+            };
+            let conn = db.0.lock().unwrap();
+            match quotes::attach_lpo(
+                &conn,
+                &tenant_id,
+                &user_id,
+                &req.quote_id,
+                &req.lpo_number,
+                req.lpo_file_path.as_deref(),
+            ) {
+                Ok(()) => Ok(IpcResponse {
+                    status: 200,
+                    message: "LPO attached".into(),
+                    data: None,
                 }),
                 Err(e) => Ok(quote_error_response(e)),
             }
@@ -1297,6 +1381,15 @@ pub fn run() {
 
     tauri::Builder::default()
         .manage(SessionState::default())
+        // Phase 5.2: registers the real native file-dialog plugin the frontend needs
+        // for attach_lpo's file-path guardrail (route-map-v2.docx Section 1.1). Was
+        // present as a JS dependency (package.json) with NO Rust-side registration and
+        // no capability permission granted -- the same "written but never wired" shape
+        // this project has flagged repeatedly elsewhere (the original Node echo-stub,
+        // AssetPicker). Without this `.plugin()` call, the frontend's `open()` import
+        // from `@tauri-apps/plugin-dialog` would fail at runtime with a "plugin not
+        // registered" error the first time a user tried to attach an LPO file.
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Phase R.0: open the real SQLite file and run migrations against it, once,
             // at startup. Phase R.2: this connection is now actually queried/written by
@@ -1369,6 +1462,11 @@ mod tests {
             required_module_key("branch_new_revision"),
             Some("quotes_core")
         );
+        assert_eq!(
+            required_module_key("update_quote_status"),
+            Some("quotes_core")
+        );
+        assert_eq!(required_module_key("attach_lpo"), Some("quotes_core"));
         // Phase 4.2
         assert_eq!(
             required_module_key("list_compliance_terms"),
@@ -1410,6 +1508,8 @@ mod tests {
         "generate_quote_pdf",
         "fetch_quote_revisions",
         "branch_new_revision",
+        "update_quote_status",
+        "attach_lpo",
         "list_compliance_terms",
         "save_compliance_term",
         "deactivate_compliance_term",

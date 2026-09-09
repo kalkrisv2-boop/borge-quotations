@@ -55,3 +55,10 @@ base64 = "0.22"
 # Templating engine for R.4 (PDF template port). Not called anywhere yet this phase —
 # added now only so R.4 doesn't hit a missing-dependency surprise, per the addendum.
 tera = "1"
+
+# Phase 5.2: real native file-dialog plugin for attach_lpo's file-path guardrail
+# (route-map-v2.docx Section 1.1). This crate is the Rust half of the
+# `@tauri-apps/plugin-dialog` JS package already listed in package.json — the JS
+# package alone does nothing without this registered on the Rust side too (see
+# lib.rs's `.plugin(tauri_plugin_dialog::init())` call).
+tauri-plugin-dialog = "2"
