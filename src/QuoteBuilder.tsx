@@ -92,6 +92,30 @@ interface TaxRuleRecord {
   is_active: boolean;
 }
 
+// New — mirrors src-tauri/src/quotes.rs's QuoteSummary exactly. Deliberately a
+// lightweight row (no line_items, no terms text), matching the backend's own
+// "a list is a picker, not an editor" reasoning.
+interface QuoteSummary {
+  id: string;
+  offer_ref: string;
+  rev_suffix: string;
+  customer_name: string;
+  status: string;
+  grand_total: number;
+  updated_at: string;
+}
+
+// Default offer_ref suggestion for "New Quote" -- an obvious, overridable
+// starting point (date-based, mirrors the QN-EQ/<date> pattern), not a value
+// meant to be saved as-is. The user can and should change it before saving.
+const suggestOfferRef = (): string => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `QN-EQ/${y}${m}${day}`;
+};
+
 const emptyDraft = (): LineItemDraft => ({
   item_description: '',
   make_model: '',
@@ -123,11 +147,18 @@ function QuoteBuilder() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [sessionToken, setSessionToken] = useState<string | null>(null);
-  const offerRef = 'QN-SAMPLE/001/2026';
+  // Was a hardcoded constant ('QN-SAMPLE/001/2026') -- meant every "New Quote" was
+  // actually re-saving over the same one sample offer_ref, and every "Fetch quote"
+  // could only ever pull that same one back. Now real, editable state, same reasoning
+  // Phase 5.1 already applied to revSuffix below.
+  const [offerRef, setOfferRef] = useState('QN-SAMPLE/001/2026');
   // Phase 5.1: was a hardcoded constant -- had to become real state once a quote could
   // branch into a new rev_suffix (Rev.01 -> Rev.02) and the UI needed to actually track
   // which revision is currently being viewed/edited.
   const [revSuffix, setRevSuffix] = useState('Rev.01');
+  // New — backs the "Saved Quotes" list/picker (list_quotes IPC command).
+  const [savedQuotes, setSavedQuotes] = useState<QuoteSummary[]>([]);
+  const [showSavedQuotes, setShowSavedQuotes] = useState(false);
   // Phase 5.2 correction: removed quoteStatusToSave (Draft/Approved selector) -- save_quote
   // no longer accepts anything but Draft. Lifecycle state now lives in currentStatus,
   // advanced only via runAdvanceStatus.
@@ -196,6 +227,9 @@ function QuoteBuilder() {
         // gated behind the "compliance_terms" entitlement, same as every other call
         // below, so a tenant without that module simply sees empty lists.
         void loadComplianceLibrary();
+        // New — populate the Saved Quotes list as soon as there's a usable session,
+        // same timing as the compliance library above.
+        void runListQuotes();
       }
     } catch (err) {
       setStatus(`register_session failed: ${(err as Error).message}`);
@@ -448,19 +482,74 @@ function QuoteBuilder() {
           `save_quote: ${res.status} ${res.message} | attach_terms_to_quote: ${attachRes.status} ${attachRes.message}`
         );
       }
+
+      // New — keep the Saved Quotes list in sync with what's actually on disk after
+      // every successful save, so it never shows stale data relative to the DB.
+      if (res.status === 200) {
+        void runListQuotes();
+      }
     } catch (err) {
       setStatus(`save_quote failed: ${(err as Error).message}`);
     }
   };
 
-  const runFetchQuote = async () => {
+  // New — list_quotes. Refreshed after register_session and after every successful
+  // save_quote, so the picker never shows stale data relative to what's actually saved.
+  const runListQuotes = async () => {
+    try {
+      const res = await tauriInvoke<IpcResponse<QuoteSummary[]>>('handle_guarded_ipc', {
+        command_name: 'list_quotes',
+        session_token: sessionToken,
+        payload: {},
+      });
+      if (res.status === 200 && res.data) {
+        setSavedQuotes(res.data);
+      }
+    } catch (err) {
+      setStatus(`list_quotes failed: ${(err as Error).message}`);
+    }
+  };
+
+  // New — loads a specific saved quote's line items and full details from a
+  // Saved Quotes list click. Sets offer_ref/rev_suffix to match, then delegates to
+  // runFetchQuote's own fetch_quote call rather than duplicating it.
+  const runLoadQuoteFromList = async (summary: QuoteSummary) => {
+    setOfferRef(summary.offer_ref);
+    setRevSuffix(summary.rev_suffix);
+    // offerRef/revSuffix are read by runFetchQuote via closure, and React state
+    // updates from setOfferRef/setRevSuffix above aren't visible until the next
+    // render -- so runFetchQuote is called with explicit overrides rather than
+    // relying on the (stale, this render) offerRef/revSuffix closure variables.
+    await runFetchQuote(summary.offer_ref, summary.rev_suffix);
+  };
+
+  // New — resets the form to start a genuinely new quote, rather than the only prior
+  // option (re-save over whatever offer_ref happened to be in the hardcoded constant).
+  // Does not touch session/login state or the loaded compliance/tax library.
+  const runNewQuote = () => {
+    setOfferRef(suggestOfferRef());
+    setRevSuffix('Rev.01');
+    setCurrentQuoteId(null);
+    setCurrentStatus(null);
+    setLineItems([]);
+    setDraft(emptyDraft());
+    setEditingIndex(null);
+    setLpoNumber('');
+    setLpoFilePath(null);
+    setPdfPath(null);
+    setStatus('New quote started -- fill in details and save.');
+  };
+
+  const runFetchQuote = async (offerRefOverride?: string, revSuffixOverride?: string) => {
+    const refToFetch = offerRefOverride ?? offerRef;
+    const revToFetch = revSuffixOverride ?? revSuffix;
     try {
       const res = await tauriInvoke<IpcResponse<{ id: string; status: string }>>(
         'handle_guarded_ipc',
         {
           command_name: 'fetch_quote',
           session_token: sessionToken,
-          payload: { offer_ref: offerRef, rev_suffix: revSuffix },
+          payload: { offer_ref: refToFetch, rev_suffix: revToFetch },
         }
       );
       setStatus(`fetch_quote: ${res.status} ${res.message}`);
@@ -832,23 +921,94 @@ function QuoteBuilder() {
               ))}
             </select>
           </div>
+          <p style={{ fontSize: '11px', color: '#5a6b75', marginTop: '4px', marginBottom: '2px' }}>
+            This text appears exactly as typed on the PDF, e.g. "VAT (5%, AED)" — type
+            the tax name itself (VAT, GST, etc.), not the region it applies in.
+          </p>
           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
             <input
-              placeholder="Region label"
+              placeholder="Tax name (e.g. VAT)"
               value={newRuleLabel}
               onChange={(e) => setNewRuleLabel(e.target.value)}
               style={{ width: '140px' }}
             />
             <input
               type="number"
-              placeholder="Rate %"
+              placeholder="Rate % (e.g. 5)"
               value={newRuleRate}
               onChange={(e) => setNewRuleRate(Number(e.target.value))}
-              style={{ width: '70px' }}
+              style={{ width: '90px' }}
             />
             <button onClick={runCreateTaxRule}>+ Add tax rule</button>
           </div>
         </div>
+      </div>
+
+      {/* New — Saved Quotes: New Quote / editable Offer Ref / picker list. Replaces the
+          old hardcoded single-offer_ref constant this used to be built around. */}
+      <div
+        style={{
+          marginTop: '16px',
+          padding: '12px',
+          border: '1px solid #ddd',
+          borderRadius: '6px',
+        }}
+      >
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: '#5a6b75' }}>Offer Ref</div>
+            <input
+              value={offerRef}
+              onChange={(e) => setOfferRef(e.target.value)}
+              placeholder="e.g. QN-EQ/20260910"
+              style={{ width: '200px' }}
+            />
+          </div>
+          <button onClick={runNewQuote}>New Quote</button>
+          <button onClick={() => setShowSavedQuotes((s) => !s)}>
+            Saved Quotes {showSavedQuotes ? '▲' : `▼ (${savedQuotes.length})`}
+          </button>
+          <button onClick={runListQuotes}>Refresh list</button>
+        </div>
+
+        {showSavedQuotes && (
+          <div style={{ marginTop: '10px', maxHeight: '220px', overflowY: 'auto' }}>
+            {savedQuotes.length === 0 ? (
+              <div style={{ fontSize: '13px', color: '#888', fontStyle: 'italic' }}>
+                No saved quotes yet.
+              </div>
+            ) : (
+              <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ textAlign: 'left', borderBottom: '1px solid #ddd' }}>
+                    <th>Offer Ref</th>
+                    <th>Rev</th>
+                    <th>Customer</th>
+                    <th>Status</th>
+                    <th>Grand Total</th>
+                    <th>Updated</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {savedQuotes.map((q) => (
+                    <tr key={q.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                      <td>{q.offer_ref}</td>
+                      <td>{q.rev_suffix}</td>
+                      <td>{q.customer_name}</td>
+                      <td>{q.status}</td>
+                      <td>{q.grand_total.toFixed(2)}</td>
+                      <td>{q.updated_at}</td>
+                      <td>
+                        <button onClick={() => runLoadQuoteFromList(q)}>Load</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
 
       <div style={{ marginTop: '16px', display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -867,7 +1027,7 @@ function QuoteBuilder() {
           </span>
         )}
         <button onClick={runSaveQuote}>4. Save quote (Draft only)</button>
-        <button onClick={runFetchQuote}>
+        <button onClick={() => runFetchQuote()}>
           5. Fetch quote (re-run after an app restart to verify persistence)
         </button>
         <button onClick={runGeneratePdf}>6. Generate PDF</button>

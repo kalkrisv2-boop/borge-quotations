@@ -59,6 +59,10 @@ pub struct IpcResponse {
 fn required_module_key(command_name: &str) -> Option<&'static str> {
     match command_name {
         "save_quote" | "fetch_quote" => Some("quotes_core"),
+        // New: list_quotes is a read-only quotes_core capability, same gate as
+        // fetch_quote -- lets the frontend populate a real "Saved Quotes" picker
+        // instead of the offer_ref being a hardcoded constant.
+        "list_quotes" => Some("quotes_core"),
         "fetch_inventory_specs" => Some("inventory_specs"),
         "calculate_rate_matrix" => Some("rate_matrix"),
         // PDF export is a `quotes_core` capability, not a separate module key —
@@ -458,6 +462,37 @@ async fn handle_guarded_ipc(
                 // must stay exhaustive over QuoteError -- this exists so a future
                 // variant addition breaks compilation here too, not just where it's
                 // reachable today.
+                Err(quotes::QuoteError::Locked(msg)) => Ok(IpcResponse {
+                    status: 409,
+                    message: msg,
+                    data: None,
+                }),
+                Err(quotes::QuoteError::Db(e)) => Ok(IpcResponse {
+                    status: 500,
+                    message: format!("Internal Error: {}", e),
+                    data: None,
+                }),
+            }
+        }
+        // New: list_quotes — read-only, no payload fields required. Backs the
+        // frontend's "Saved Quotes" picker so offer_ref no longer has to be a
+        // hardcoded constant to have anything to fetch.
+        "list_quotes" => {
+            let conn = db.0.lock().unwrap();
+            match quotes::list_quotes(&conn, &tenant_id) {
+                Ok(rows) => Ok(IpcResponse {
+                    status: 200,
+                    message: format!("{} quote(s) found", rows.len()),
+                    data: Some(serde_json::to_value(rows).unwrap_or(serde_json::Value::Null)),
+                }),
+                Err(quotes::QuoteError::InvalidPayload(msg)) => Ok(IpcResponse {
+                    status: 400,
+                    message: msg,
+                    data: None,
+                }),
+                // list_quotes is read-only and can never actually produce this variant,
+                // but the match must stay exhaustive over QuoteError — same reasoning
+                // as fetch_quote's Locked arm above.
                 Err(quotes::QuoteError::Locked(msg)) => Ok(IpcResponse {
                     status: 409,
                     message: msg,
@@ -1441,6 +1476,7 @@ mod tests {
     fn required_module_key_maps_known_commands_and_only_those() {
         assert_eq!(required_module_key("save_quote"), Some("quotes_core"));
         assert_eq!(required_module_key("fetch_quote"), Some("quotes_core"));
+        assert_eq!(required_module_key("list_quotes"), Some("quotes_core"));
         assert_eq!(
             required_module_key("fetch_inventory_specs"),
             Some("inventory_specs")
@@ -1503,6 +1539,7 @@ mod tests {
         for cmd in [
         "save_quote",
         "fetch_quote",
+        "list_quotes",
         "fetch_inventory_specs",
         "calculate_rate_matrix",
         "generate_quote_pdf",

@@ -445,6 +445,59 @@ pub fn save_quote(
 }
 
 // ---------------------------------------------------------------------------
+// list_quotes — new: the frontend had no way to discover existing offer_refs at
+// all before this. `QuoteBuilder.tsx` previously hardcoded a single sample
+// `offer_ref` as a constant, so "fetch" always returned that same one quote no
+// matter what -- this is the backend half of fixing that. Deliberately a
+// lightweight summary row, not a full `QuoteRecord` (no line_items, no terms
+// text): a quote list is a picker, not an editor, and shipping full line-item
+// payloads for every saved quote just to populate a dropdown/list wastes work
+// on both ends for no benefit.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuoteSummary {
+    pub id: String,
+    pub offer_ref: String,
+    pub rev_suffix: String,
+    pub customer_name: String,
+    pub status: String,
+    pub grand_total: f64,
+    pub updated_at: String,
+}
+
+/// Lists quotes for `tenant_id`, most recently updated first. Tenant isolation:
+/// scoped by `tenant_id` in the WHERE clause, same guarantee as `fetch_quote` --
+/// a quote saved by tenant A can never appear in tenant B's list.
+///
+/// Returns one row per `(offer_ref, rev_suffix)` pair, i.e. every revision of
+/// every quote shows up as its own row (mirroring how `branch_new_revision`
+/// creates a genuinely new row per revision) rather than collapsing to one row
+/// per `offer_ref`. The frontend groups/labels these for display.
+pub fn list_quotes(conn: &Connection, tenant_id: &str) -> Result<Vec<QuoteSummary>, QuoteError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, offer_ref, rev_suffix, customer_name, status, grand_total, updated_at
+         FROM quotes
+         WHERE tenant_id = ?1
+         ORDER BY updated_at DESC, rowid DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![tenant_id], |row| {
+            Ok(QuoteSummary {
+                id: row.get(0)?,
+                offer_ref: row.get(1)?,
+                rev_suffix: row.get(2)?,
+                customer_name: row.get(3)?,
+                status: row.get(4)?,
+                grand_total: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+// ---------------------------------------------------------------------------
 // fetch_quote — port of ipc_handlers.js's `fetch_quote` case
 // ---------------------------------------------------------------------------
 
@@ -1626,5 +1679,48 @@ mod tests {
         assert_eq!(fetched.line_items.len(), 2);
         assert_eq!(fetched.line_items[0].item_description, "Crane, 50T");
         assert_eq!(fetched.line_items[1].item_description, "Generator, 100kVA");
+    }
+
+    #[test]
+    fn list_quotes_returns_one_row_per_offer_ref_rev_suffix_most_recent_first() {
+        let conn = test_conn();
+        save_quote(&conn, "tenant-1", "user-1", &sample_quote("QN-EH/010/2026", "Rev.01"))
+            .unwrap();
+        save_quote(&conn, "tenant-1", "user-1", &sample_quote("QN-EH/020/2026", "Rev.01"))
+            .unwrap();
+        save_quote(&conn, "tenant-1", "user-1", &sample_quote("QN-EH/020/2026", "Rev.02"))
+            .unwrap();
+
+        let rows = list_quotes(&conn, "tenant-1").unwrap();
+        assert_eq!(rows.len(), 3, "one row per (offer_ref, rev_suffix), not collapsed");
+
+        // Most recently saved comes first.
+        assert_eq!(rows[0].offer_ref, "QN-EH/020/2026");
+        assert_eq!(rows[0].rev_suffix, "Rev.02");
+    }
+
+    #[test]
+    fn list_quotes_is_tenant_isolated() {
+        let conn = test_conn();
+        seed_tenant_and_user(&conn, "tenant-2", "user-2");
+        save_quote(&conn, "tenant-1", "user-1", &sample_quote("QN-EH/030/2026", "Rev.01"))
+            .unwrap();
+        save_quote(&conn, "tenant-2", "user-2", &sample_quote("QN-EH/040/2026", "Rev.01"))
+            .unwrap();
+
+        let tenant1_rows = list_quotes(&conn, "tenant-1").unwrap();
+        assert_eq!(tenant1_rows.len(), 1);
+        assert_eq!(tenant1_rows[0].offer_ref, "QN-EH/030/2026");
+
+        let tenant2_rows = list_quotes(&conn, "tenant-2").unwrap();
+        assert_eq!(tenant2_rows.len(), 1);
+        assert_eq!(tenant2_rows[0].offer_ref, "QN-EH/040/2026");
+    }
+
+    #[test]
+    fn list_quotes_empty_tenant_returns_empty_vec_not_error() {
+        let conn = test_conn();
+        let rows = list_quotes(&conn, "tenant-1").unwrap();
+        assert!(rows.is_empty());
     }
 }

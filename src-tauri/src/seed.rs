@@ -185,14 +185,28 @@ mod tests {
     use super::*;
     use crate::db;
 
+    // Both scenarios below mutate process-wide env vars (SEED_USER_EMAIL /
+    // SEED_USER_PASSWORD_HASH) via std::env::set_var/remove_var. cargo test runs tests
+    // in parallel threads within a single process by default, and env vars are
+    // process-global state, not thread-local -- so if these lived as two separate
+    // #[test] functions, one test's set_var could race with the other test's assert
+    // that no vars are set, causing an intermittent (timing-dependent) failure that
+    // wouldn't reproduce every run. Merged into one sequential test so there is no
+    // window where the two scenarios can interleave. If either scenario needs to be
+    // exercised independently again, gate concurrency with a crate like `serial_test`
+    // rather than splitting this back into two plain #[test] fns.
     #[test]
-    fn without_env_vars_no_user_is_seeded_and_no_real_data_appears() {
-        let path = std::env::temp_dir().join(format!(
+    fn seeding_respects_env_vars_for_user_creation() {
+        // -- Scenario 1: no env vars set -> no user seeded, tenant is placeholder data.
+        std::env::remove_var("SEED_USER_EMAIL");
+        std::env::remove_var("SEED_USER_PASSWORD_HASH");
+
+        let path_noenv = std::env::temp_dir().join(format!(
             "borge_seed_test_noenv_{}.sqlite3",
             std::process::id()
         ));
-        let _ = std::fs::remove_file(&path);
-        let conn = db::init_db(&path).expect("init_db should succeed");
+        let _ = std::fs::remove_file(&path_noenv);
+        let conn = db::init_db(&path_noenv).expect("init_db should succeed");
         seed_dev_data(&conn).expect("seeding with no env vars should not error");
 
         let user_count: i64 = conn
@@ -212,23 +226,21 @@ mod tests {
         );
 
         drop(conn);
-        let _ = std::fs::remove_file(&path);
-    }
+        let _ = std::fs::remove_file(&path_noenv);
 
-    #[test]
-    fn with_env_vars_set_a_real_login_capable_user_is_seeded() {
+        // -- Scenario 2: env vars set -> a real login-capable user is seeded.
         std::env::set_var("SEED_USER_EMAIL", "test@example.com");
         std::env::set_var(
             "SEED_USER_PASSWORD_HASH",
             crate::auth::hash_password("TestPassword123!", None),
         );
 
-        let path = std::env::temp_dir().join(format!(
+        let path_withenv = std::env::temp_dir().join(format!(
             "borge_seed_test_withenv_{}.sqlite3",
             std::process::id()
         ));
-        let _ = std::fs::remove_file(&path);
-        let conn = db::init_db(&path).expect("init_db should succeed");
+        let _ = std::fs::remove_file(&path_withenv);
+        let conn = db::init_db(&path_withenv).expect("init_db should succeed");
         seed_dev_data(&conn).expect("seeding with env vars set should succeed");
 
         let hash: String = conn
@@ -243,6 +255,6 @@ mod tests {
         std::env::remove_var("SEED_USER_EMAIL");
         std::env::remove_var("SEED_USER_PASSWORD_HASH");
         drop(conn);
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&path_withenv);
     }
 }
